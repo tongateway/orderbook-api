@@ -86,7 +86,6 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
-          script_stop: true
           envs: OWNER,REPO,BRANCH,GHCR_USER,GHCR_PASS
           script: |
             OWNER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
@@ -94,7 +93,6 @@ jobs:
             IMAGE="ghcr.io/${OWNER}/${REPO}"
             IMAGE_TAG="${BRANCH}-latest"
 
-            # Выбираем целевую папку
             BASE_DIR="/srv/apps/${REPO}"
             if [ "$BRANCH" = "stage" ]; then
               TARGET_DIR="${BASE_DIR}-stage"
@@ -109,31 +107,29 @@ jobs:
             echo "Compose project: $COMPOSE_PROJECT_NAME"
             echo "Will use image: ${IMAGE}:${IMAGE_TAG}"
 
-            # Логин в GHCR
-            echo "$GHCR_PASS" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            echo "=== GHCR Login ==="
+            echo "$GHCR_PASS" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || { echo "FATAL: docker login failed"; exit 1; }
 
-            cd "$TARGET_DIR"
+            cd "$TARGET_DIR" || { echo "FATAL: directory $TARGET_DIR not found"; exit 1; }
 
-            COMPOSE_FILE="docker-compose.yml"
             export COMPOSE_PROJECT_NAME
             export IMAGE_REGISTRY_PATH="${IMAGE}"
             export IMAGE_TAG="${IMAGE_TAG}"
 
             echo "=== Pulling image ==="
-            docker compose pull
+            docker compose pull || { echo "FATAL: docker compose pull failed"; exit 1; }
 
             echo "=== Starting containers ==="
-            docker compose up -d --force-recreate
+            docker compose up -d --force-recreate || { echo "FATAL: docker compose up failed"; exit 1; }
 
             echo "=== Container status ==="
-            docker compose -f "$COMPOSE_FILE" ps
+            docker compose ps
 
-            # Проверяем что все контейнеры запущены
-            RUNNING=$(docker compose -f "$COMPOSE_FILE" ps --status running -q | wc -l)
-            TOTAL=$(docker compose -f "$COMPOSE_FILE" ps -q | wc -l)
+            RUNNING=$(docker compose ps --status running -q | wc -l)
+            TOTAL=$(docker compose ps -q | wc -l)
             if [ "$RUNNING" -lt "$TOTAL" ] || [ "$TOTAL" -eq 0 ]; then
-              echo "ERROR: Not all containers are running ($RUNNING/$TOTAL)"
-              docker compose -f "$COMPOSE_FILE" logs --tail=50
+              echo "FATAL: Not all containers are running ($RUNNING/$TOTAL)"
+              docker compose logs --tail=50
               exit 1
             fi
             echo "All $RUNNING containers are running"
