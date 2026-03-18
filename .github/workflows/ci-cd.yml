@@ -1,0 +1,134 @@
+name: CI/CD (build & deploy)
+
+on:
+  push:
+    branches: [ main, stage ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write   # нужно для push в GHCR c GITHUB_TOKEN
+
+env:
+  OWNER: ${{ github.repository_owner }}
+  REPO:  ${{ github.event.repository.name }}
+  BRANCH: ${{ github.ref_name }}
+  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+
+jobs:
+  build:
+    name: Build & Push image to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize lowercase image name
+        id: normalize
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO_LC=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${OWNER_LC}/${REPO_LC}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          BRANCH="${GITHUB_REF_NAME}"
+          IMAGE="${{ steps.normalize.outputs.image }}"
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "Computed tags:"
+          echo " - ${IMAGE}:${BRANCH}-latest"
+          echo " - ${IMAGE}:${BRANCH}-${SHORT_SHA}"
+
+      - name: Build & Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.branch }}-latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.branch }}-${{ steps.meta.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.branch }}-${{ steps.meta.outputs.short_sha }}
+
+  deploy:
+    name: Deploy on server (compose pull & up)
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script: |
+            set -e
+
+            OWNER="${{ env.OWNER }}"
+            REPO="${{ env.REPO }}"
+            BRANCH="${{ env.BRANCH }}"
+            IMAGE="ghcr.io/${OWNER}/${REPO}"
+            IMAGE_TAG="${BRANCH}-latest"   # будем тянуть свежий тег ветки
+
+            # Выбираем целевую папку
+            BASE_DIR="/srv/apps/${REPO}"
+            if [ "$BRANCH" = "stage" ]; then
+              TARGET_DIR="${BASE_DIR}-stage"
+            else
+              TARGET_DIR="${BASE_DIR}"
+            fi
+            COMPOSE_PROJECT_NAME="${REPO}-${BRANCH}"
+
+            echo "Repo: ${OWNER}/${REPO}"
+            echo "Branch: $BRANCH"
+            echo "Target dir: $TARGET_DIR"
+            echo "Compose project: $COMPOSE_PROJECT_NAME"
+            echo "Will use image: ${IMAGE}:${IMAGE_TAG}"
+
+            # Логин в GHCR (нужен если образы приватные). Иначе шаг пропустится.
+            GHCR_USER="${{ secrets.GHCR_USERNAME || '' }}"
+            GHCR_PASS="${{ secrets.GHCR_TOKEN || '' }}"
+            if [ -n "$GHCR_USER" ] && [ -n "$GHCR_PASS" ]; then
+              echo "$GHCR_PASS" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            fi
+
+            cd "$TARGET_DIR"
+
+            # Определяем compose-файл
+            COMPOSE_FILE="docker-compose.yml"
+            export COMPOSE_PROJECT_NAME
+
+            echo "Using compose file: $COMPOSE_FILE"
+
+            # Пробрасываем в compose сведения об образе (см. пример compose ниже)
+            export IMAGE_REGISTRY_PATH="${IMAGE}"
+            export IMAGE_TAG="${IMAGE_TAG}"
+
+            # Тянем свежий образ и поднимаем сервисы
+            echo "Starting docker compose pull"
+            docker compose pull && docker compose up -d --force-recreate
+            echo "Up finished"
+            docker compose -f "$COMPOSE_FILE" ps
+            echo "PS finished"

@@ -1,0 +1,29 @@
+# Example configuration values. Copy to config.yaml and adjust as needed.
+
+redis:
+  host: <your-redis-host>
+  port: <your-redis-port>
+  password: <optional-password-or-empty-string>
+  db: <redis-db-number>
+
+network:
+  mainnet: <true-or-false>
+
+api:
+  host: <public-hostname-or-ip>
+  port: <service-port>
+  rps: 1 # count requests per 1 second
+  auth_required: true # Set to false to disable API key authentication
+  # Note: API keys are stored in the database (api_keys table)
+  # Use database migrations and API endpoints to manage keys
+
+database:
+  type: postgres  # only postgres is supported
+  host: localhost
+  port: "port-number"
+  user: postgres
+  password: <your-password>
+  dbname: <your-database-name>
+  sslmode: disable  # disable, require, verify-ca, verify-full
+  # Alternatively, you can use DSN directly instead of individual parameters:
+  # dsn: postgres://user:password@host:port/dbname?sslmode=disable
