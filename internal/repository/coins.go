@@ -2,10 +2,18 @@ package repository
 
 import (
 	"context"
+	"fmt"
 
 	dbmodels "api/internal/database/models"
 	"api/internal/middleware"
 )
+
+var allowedCoinSortColumns = map[string]string{
+	"id":         "coins.id",
+	"name":       "coins.name",
+	"symbol":     "coins.symbol",
+	"cnt_orders": "cnt_orders",
+}
 
 type CoinsRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string) ([]dbmodels.Coin, error)
@@ -27,14 +35,23 @@ func (r *coinsRepository) GetList(ctx context.Context, offset int, limit int, or
 		return nil, err
 	}
 
+	// Validate order direction
+	if order != "asc" && order != "desc" {
+		order = "asc"
+	}
+
 	var coins []dbmodels.Coin
 	dbq := session.WithContext(ctx).Offset(offset).Limit(limit)
 	for _, clause := range orderClauses {
-		if clause == "cnt_orders" {
+		col, ok := allowedCoinSortColumns[clause]
+		if !ok {
+			return nil, fmt.Errorf("invalid sort column: %s", clause)
+		}
+		if col == "cnt_orders" {
 			dbq = dbq.Joins("LEFT JOIN orders ON coins.id = orders.from_coin_id")
 			dbq = dbq.Order("COUNT(orders.id) " + order)
 		} else {
-			dbq = dbq.Order(clause + " " + order)
+			dbq = dbq.Order(col + " " + order)
 		}
 	}
 	stmt := dbq.Group("coins.id").Find(&coins)

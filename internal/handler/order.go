@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -101,47 +100,49 @@ func (h *OrderHandler) List(c *gin.Context) {
 		order = "asc"
 	}
 
-	var filtersList []string = make([]string, 0)
+	var filters repository.OrderFilters
 	if orderListReq.FromCoinID > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("from_coin_id = %d", orderListReq.FromCoinID))
+		filters.FromCoinID = &orderListReq.FromCoinID
 	}
 	if orderListReq.ToCoinID > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("to_coin_id = %d", orderListReq.ToCoinID))
+		filters.ToCoinID = &orderListReq.ToCoinID
 	}
 	if orderListReq.Status != "" {
-		filtersList = append(filtersList, fmt.Sprintf("status = '%s'", orderListReq.Status))
+		status := string(orderListReq.Status)
+		filters.Status = &status
 	}
 	if orderListReq.MinAmount > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("amount >= %d", orderListReq.MinAmount))
+		filters.MinAmount = &orderListReq.MinAmount
 	}
 	if orderListReq.MaxAmount > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("amount <= %d", orderListReq.MaxAmount))
+		filters.MaxAmount = &orderListReq.MaxAmount
 	}
 	if orderListReq.MinPriceRate > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("price_rate >= %d", orderListReq.MinPriceRate))
+		filters.MinPriceRate = &orderListReq.MinPriceRate
 	}
 	if orderListReq.MaxPriceRate > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("price_rate <= %d", orderListReq.MaxPriceRate))
+		filters.MaxPriceRate = &orderListReq.MaxPriceRate
 	}
 	if orderListReq.MinSlippage > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("slippage >= %d", orderListReq.MinSlippage))
+		filters.MinSlippage = &orderListReq.MinSlippage
 	}
 	if orderListReq.MaxSlippage > 0 {
-		filtersList = append(filtersList, fmt.Sprintf("slippage <= %d", orderListReq.MaxSlippage))
+		filters.MaxSlippage = &orderListReq.MaxSlippage
 	}
 	if orderListReq.OwnerRawAddress != "" {
-		raw_address, err := addr.ParseRawAddr(orderListReq.OwnerRawAddress)
+		rawAddress, err := addr.ParseRawAddr(orderListReq.OwnerRawAddress)
 		if err != nil {
 			c.Set("error", err)
 			slog.WarnContext(c.Request.Context(), "invalid owner raw address", "error", err)
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		filtersList = append(filtersList, fmt.Sprintf("wallets.raw_address = '%s'", raw_address.StringRaw()))
+		addrStr := rawAddress.StringRaw()
+		filters.OwnerRawAddress = &addrStr
 	}
 
 	// Fetch GORM models first
-	orders, err := h.repo.GetList(c.Request.Context(), offset, limit, sortList, order, filtersList)
+	orders, err := h.repo.GetList(c.Request.Context(), offset, limit, sortList, order, filters)
 	if err != nil {
 		c.Set("error", err)
 		fullErr := middleware.FormatErrorFull(err)

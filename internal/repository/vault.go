@@ -4,7 +4,15 @@ import (
 	dbmodels "api/internal/database/models"
 	"api/internal/middleware"
 	"context"
+	"fmt"
 )
+
+var allowedVaultSortColumns = map[string]string{
+	"id":         "vaults.id",
+	"factory_id": "vaults.factory_id",
+	"created_at": "vaults.created_at",
+	"type":       "vaults._type",
+}
 
 type VaultRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, jettonMinterAddress string, vaultType string) ([]dbmodels.Vault, error)
@@ -24,6 +32,11 @@ func (r *vaultRepository) GetList(ctx context.Context, offset int, limit int, or
 		return nil, err
 	}
 
+	// Validate order direction
+	if order != "asc" && order != "desc" {
+		order = "asc"
+	}
+
 	var vaults []dbmodels.Vault
 	dbq := session.WithContext(ctx).Offset(offset).Limit(limit)
 	if jettonMinterAddress != "" {
@@ -33,7 +46,11 @@ func (r *vaultRepository) GetList(ctx context.Context, offset int, limit int, or
 		dbq = dbq.Where("vaults._type = ?::vaulttype", vaultType)
 	}
 	for _, clause := range orderClauses {
-		dbq = dbq.Order(clause + " " + order)
+		col, ok := allowedVaultSortColumns[clause]
+		if !ok {
+			return nil, fmt.Errorf("invalid sort column: %s", clause)
+		}
+		dbq = dbq.Order(col + " " + order)
 	}
 	stmt := dbq.Find(&vaults)
 	return vaults, stmt.Error

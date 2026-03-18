@@ -2,7 +2,7 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"time"
 
@@ -23,9 +23,9 @@ func NewAPIKeysRepository() APIKeysRepository {
 	return &apiKeysRepository{}
 }
 
-// HashKey creates a SHA-256 hash of the API key
+// HashKey creates a SHA-512 hash of the API key
 func HashKey(apiKey string) string {
-	hash := sha256.Sum256([]byte(apiKey))
+	hash := sha512.Sum512([]byte(apiKey))
 	return hex.EncodeToString(hash[:])
 }
 

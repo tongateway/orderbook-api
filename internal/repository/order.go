@@ -5,9 +5,32 @@ import (
 	"api/internal/middleware"
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
+
+var allowedOrderSortColumns = map[string]string{
+	"id":          "orders.id",
+	"created_at":  "orders.created_at",
+	"deployed_at": "orders.deployed_at",
+	"status":      "orders.status",
+	"type":        "orders.type",
+	"amount":      "orders.amount",
+	"price_rate":  "orders.price_rate",
+}
+
+// OrderFilters holds typed, validated filter parameters for order queries.
+type OrderFilters struct {
+	FromCoinID      *int64
+	ToCoinID        *int64
+	Status          *string
+	MinAmount       *int64
+	MaxAmount       *int64
+	MinPriceRate    *int64
+	MaxPriceRate    *int64
+	MinSlippage     *int64
+	MaxSlippage     *int64
+	OwnerRawAddress *string
+}
 
 type OrderStats struct {
 	Status string
@@ -37,7 +60,7 @@ type TradingStatsRow struct {
 }
 
 type OrderRepository interface {
-	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters []string) ([]dbmodels.Order, error)
+	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Order, error)
 	GetStatsByWalletAddress(ctx context.Context, walletAddress string) ([]OrderStats, int64, error)
 	GetDeployedTotalsByWalletAddress(ctx context.Context, walletAddress string) ([]DeployedTotalRow, error)
@@ -52,25 +75,24 @@ func NewOrderRepository() OrderRepository {
 	return &orderRepository{}
 }
 
-func (r *orderRepository) GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters []string) ([]dbmodels.Order, error) {
+func (r *orderRepository) GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error) {
 	session, err := middleware.GetDBSessionFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate order direction
+	if order != "asc" && order != "desc" {
+		order = "asc"
+	}
+
 	var orders []dbmodels.Order
 
-	// Check if any filter references Wallet (needs JOIN instead of Preload)
-	needsWalletJoin := false
-	for _, filter := range filters {
-		if strings.Contains(filter, "wallets.") {
-			needsWalletJoin = true
-			break
-		}
-	}
+	// Check if wallet join is needed
+	needsWalletJoin := filters.OwnerRawAddress != nil
 
 	dbq := session.WithContext(ctx)
 
-	// Use Joins for Wallet if filtering by Wallet, otherwise use Preload
 	if needsWalletJoin {
 		dbq = dbq.Joins("JOIN wallets ON orders.wallet_id = wallets.id")
 	} else {
@@ -80,17 +102,47 @@ func (r *orderRepository) GetList(ctx context.Context, offset int, limit int, or
 	// Always preload Vault
 	dbq = dbq.Preload("Vault").Offset(offset).Limit(limit)
 
-	for _, filter := range filters {
-		dbq = dbq.Where(filter)
+	// Apply filters using parameterized queries
+	if filters.FromCoinID != nil {
+		dbq = dbq.Where("from_coin_id = ?", *filters.FromCoinID)
 	}
+	if filters.ToCoinID != nil {
+		dbq = dbq.Where("to_coin_id = ?", *filters.ToCoinID)
+	}
+	if filters.Status != nil {
+		dbq = dbq.Where("status = ?", *filters.Status)
+	}
+	if filters.MinAmount != nil {
+		dbq = dbq.Where("amount >= ?", *filters.MinAmount)
+	}
+	if filters.MaxAmount != nil {
+		dbq = dbq.Where("amount <= ?", *filters.MaxAmount)
+	}
+	if filters.MinPriceRate != nil {
+		dbq = dbq.Where("price_rate >= ?", *filters.MinPriceRate)
+	}
+	if filters.MaxPriceRate != nil {
+		dbq = dbq.Where("price_rate <= ?", *filters.MaxPriceRate)
+	}
+	if filters.MinSlippage != nil {
+		dbq = dbq.Where("slippage >= ?", *filters.MinSlippage)
+	}
+	if filters.MaxSlippage != nil {
+		dbq = dbq.Where("slippage <= ?", *filters.MaxSlippage)
+	}
+	if filters.OwnerRawAddress != nil {
+		dbq = dbq.Where("wallets.raw_address = ?", *filters.OwnerRawAddress)
+	}
+
+	// Apply validated sort columns
 	for _, clause := range orderClauses {
-		// Add the order string ("asc" or "desc") to the field clause.
-		if order != "" {
-			dbq = dbq.Order(fmt.Sprintf("%s %s", clause, order))
-		} else {
-			dbq = dbq.Order(clause)
+		col, ok := allowedOrderSortColumns[clause]
+		if !ok {
+			return nil, fmt.Errorf("invalid sort column: %s", clause)
 		}
+		dbq = dbq.Order(col + " " + order)
 	}
+
 	stmt := dbq.Find(&orders)
 	return orders, stmt.Error
 }

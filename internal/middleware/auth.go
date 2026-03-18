@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -108,8 +108,8 @@ func getKeyPrefix(key string) string {
 	return key[:4] + "****"
 }
 
-// hashKey creates a SHA-256 hash of the API key
+// hashKey creates a SHA-512 hash of the API key
 func hashKey(apiKey string) string {
-	hash := sha256.Sum256([]byte(apiKey))
+	hash := sha512.Sum512([]byte(apiKey))
 	return hex.EncodeToString(hash[:])
 }
