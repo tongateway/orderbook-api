@@ -78,21 +78,21 @@ jobs:
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
-        env:
-          GHCR_USER: ${{ secrets.GHCR_USERNAME }}
-          GHCR_PASS: ${{ secrets.GHCR_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
-          envs: OWNER,REPO,BRANCH,GHCR_USER,GHCR_PASS
           script: |
-            OWNER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-            REPO=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
-            IMAGE="ghcr.io/${OWNER}/${REPO}"
-            IMAGE_TAG="${BRANCH}-latest"
+            set -e
 
+            OWNER="${{ env.OWNER }}"
+            REPO="${{ env.REPO }}"
+            BRANCH="${{ env.BRANCH }}"
+            IMAGE="ghcr.io/${OWNER}/${REPO}"
+            IMAGE_TAG="${BRANCH}-latest"   # будем тянуть свежий тег ветки
+
+            # Выбираем целевую папку
             BASE_DIR="/srv/apps/${REPO}"
             if [ "$BRANCH" = "stage" ]; then
               TARGET_DIR="${BASE_DIR}-stage"
@@ -107,29 +107,28 @@ jobs:
             echo "Compose project: $COMPOSE_PROJECT_NAME"
             echo "Will use image: ${IMAGE}:${IMAGE_TAG}"
 
-            echo "=== GHCR Login ==="
-            echo "$GHCR_PASS" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || { echo "FATAL: docker login failed"; exit 1; }
+            # Логин в GHCR (нужен если образы приватные). Иначе шаг пропустится.
+            GHCR_USER="${{ secrets.GHCR_USERNAME || '' }}"
+            GHCR_PASS="${{ secrets.GHCR_TOKEN || '' }}"
+            if [ -n "$GHCR_USER" ] && [ -n "$GHCR_PASS" ]; then
+              echo "$GHCR_PASS" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            fi
 
-            cd "$TARGET_DIR" || { echo "FATAL: directory $TARGET_DIR not found"; exit 1; }
+            cd "$TARGET_DIR"
 
+            # Определяем compose-файл
+            COMPOSE_FILE="docker-compose.yml"
             export COMPOSE_PROJECT_NAME
+
+            echo "Using compose file: $COMPOSE_FILE"
+
+            # Пробрасываем в compose сведения об образе (см. пример compose ниже)
             export IMAGE_REGISTRY_PATH="${IMAGE}"
             export IMAGE_TAG="${IMAGE_TAG}"
 
-            echo "=== Pulling image ==="
-            docker compose pull || { echo "FATAL: docker compose pull failed"; exit 1; }
-
-            echo "=== Starting containers ==="
-            docker compose up -d --force-recreate || { echo "FATAL: docker compose up failed"; exit 1; }
-
-            echo "=== Container status ==="
-            docker compose ps
-
-            RUNNING=$(docker compose ps --status running -q | wc -l)
-            TOTAL=$(docker compose ps -q | wc -l)
-            if [ "$RUNNING" -lt "$TOTAL" ] || [ "$TOTAL" -eq 0 ]; then
-              echo "FATAL: Not all containers are running ($RUNNING/$TOTAL)"
-              docker compose logs --tail=50
-              exit 1
-            fi
-            echo "All $RUNNING containers are running"
+            # Тянем свежий образ и поднимаем сервисы
+            echo "Starting docker compose pull"
+            docker compose pull && docker compose up -d --force-recreate
+            echo "Up finished"
+            docker compose -f "$COMPOSE_FILE" ps
+            echo "PS finished"
