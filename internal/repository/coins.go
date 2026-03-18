@@ -18,6 +18,7 @@ var allowedCoinSortColumns = map[string]string{
 type CoinsRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string) ([]dbmodels.Coin, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Coin, error)
+	GetByName(ctx context.Context, name string) (*dbmodels.Coin, error)
 	GetBySymbol(ctx context.Context, symbol string) (*dbmodels.Coin, error)
 	GetByTonRawAddress(ctx context.Context, tonRawAddress string) (*dbmodels.Coin, error)
 }
@@ -66,6 +67,18 @@ func (r *coinsRepository) GetByID(ctx context.Context, id uint64) (*dbmodels.Coi
 
 	var coin dbmodels.Coin
 	stmt := session.WithContext(ctx).Where("id = ?", id).First(&coin)
+	return &coin, stmt.Error
+}
+
+// GetByName returns the first coin matching the given name (case-insensitive)
+func (r *coinsRepository) GetByName(ctx context.Context, name string) (*dbmodels.Coin, error) {
+	session, err := middleware.GetDBSessionFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var coin dbmodels.Coin
+	stmt := session.WithContext(ctx).Where("LOWER(name) = LOWER(?)", name).First(&coin)
 	return &coin, stmt.Error
 }
 

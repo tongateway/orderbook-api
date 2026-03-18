@@ -59,6 +59,16 @@ type TradingStatsRow struct {
 	Volume int64
 }
 
+// CoinPairPriceRow represents one row from the coin price summary query.
+// Side is "ask" (orders selling the coin) or "bid" (orders buying the coin).
+type CoinPairPriceRow struct {
+	CounterCoinID int    `json:"counter_coin_id"`
+	Side          string `json:"side"`
+	BestPrice     int64  `json:"best_price"`
+	OrderCount    int64  `json:"order_count"`
+	TotalAmount   int64  `json:"total_amount"`
+}
+
 type OrderRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Order, error)
@@ -66,6 +76,7 @@ type OrderRepository interface {
 	GetDeployedTotalsByWalletAddress(ctx context.Context, walletAddress string) ([]DeployedTotalRow, error)
 	GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error)
 	GetTradingStats(ctx context.Context, fromCoinID, toCoinID int, since time.Time) ([]TradingStatsRow, error)
+	GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error)
 }
 
 type orderRepository struct {
@@ -278,6 +289,52 @@ func (r *orderRepository) GetTradingStats(ctx context.Context, fromCoinID, toCoi
 		Select("status, COUNT(*) AS count, COALESCE(SUM(initial_amount), 0) AS volume").
 		Group("status").
 		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return rows, nil
+}
+
+// GetCoinPriceSummary returns aggregated order book summary for all trading pairs
+// involving the given coin. Returns ask and bid rows for each counter-party coin.
+// coinID = 0 means TON (NULL in DB).
+func (r *orderRepository) GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error) {
+	session, err := middleware.GetDBSessionFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []CoinPairPriceRow
+
+	// Build the condition for this coin (TON = NULL)
+	var fromCondition, toCondition string
+	if coinID == 0 {
+		fromCondition = "from_coin_id IS NULL"
+		toCondition = "to_coin_id IS NULL"
+	} else {
+		fromCondition = fmt.Sprintf("from_coin_id = %d", coinID)
+		toCondition = fmt.Sprintf("to_coin_id = %d", coinID)
+	}
+
+	// Use raw SQL for UNION ALL query
+	query := fmt.Sprintf(`
+		SELECT COALESCE(to_coin_id, 0) AS counter_coin_id, 'ask' AS side,
+			MIN(price_rate) AS best_price, COUNT(*) AS order_count,
+			COALESCE(SUM(amount), 0) AS total_amount
+		FROM orders
+		WHERE status = 'deployed' AND %s
+		GROUP BY COALESCE(to_coin_id, 0)
+		UNION ALL
+		SELECT COALESCE(from_coin_id, 0) AS counter_coin_id, 'bid' AS side,
+			MAX(price_rate) AS best_price, COUNT(*) AS order_count,
+			COALESCE(SUM(amount), 0) AS total_amount
+		FROM orders
+		WHERE status = 'deployed' AND %s
+		GROUP BY COALESCE(from_coin_id, 0)
+	`, fromCondition, toCondition)
+
+	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

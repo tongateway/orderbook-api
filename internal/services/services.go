@@ -32,6 +32,7 @@ type Services struct {
 	// Caches
 	OrderBookCache    *cache.OrderBookCache
 	TradingStatsCache *cache.TradingStatsCache
+	CoinPriceCache    *cache.CoinPriceCache
 
 	Repositories *repository.Repositories
 }
@@ -83,6 +84,13 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		30*time.Second,
 	)
 
+	// Initialize coin price cache: Redis 30s
+	coinPriceCache := cache.NewCoinPriceCache(
+		redisClient,
+		orderRepo.GetCoinPriceSummary,
+		30*time.Second,
+	)
+
 	return &Services{
 		DB:                db,
 		Redis:             redisClient,
@@ -92,6 +100,7 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		APIKeysRepo:       apiKeysRepo,
 		OrderBookCache:    orderBookCache,
 		TradingStatsCache: tradingStatsCache,
+		CoinPriceCache:    coinPriceCache,
 		Repositories:      repositories,
 	}, nil
 }

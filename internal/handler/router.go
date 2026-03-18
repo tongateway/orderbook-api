@@ -11,6 +11,7 @@ import (
 func RegisterHandlers(router *gin.RouterGroup, svc *services.Services) {
 	// Initialize handlers with repositories from service locator
 	coinsHandler := NewCoinsHandler(svc.CoinsRepo)
+	coinPriceHandler := NewCoinPriceHandler(svc.CoinPriceCache, svc.CoinsRepo)
 	orderHandler := NewOrderHandler(svc.OrderRepo)
 	orderBookHandler := NewOrderBookHandler(svc.OrderBookCache, svc.CoinsRepo)
 	tradingStatsHandler := NewTradingStatsHandler(svc.TradingStatsCache, svc.CoinsRepo)
@@ -18,6 +19,7 @@ func RegisterHandlers(router *gin.RouterGroup, svc *services.Services) {
 
 	// Register routes
 	router.GET("/coins", coinsHandler.List)
+	router.GET("/coins/price", coinPriceHandler.GetPrice)
 	router.GET("/coins/:id", coinsHandler.GetByID)
 	router.GET("/orders", orderHandler.List)
 	router.GET("/orders/book", orderBookHandler.GetOrderBook)
