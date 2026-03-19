@@ -2,6 +2,7 @@ package handler
 
 import (
 	"log/slog"
+	"math/big"
 	"net/http"
 
 	"api/internal/cache"
@@ -11,6 +12,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// bigMul computes totalAmount * priceRate using math/big and returns the result as a string.
+func bigMul(amount int64, priceRateStr string) string {
+	pr := new(big.Int)
+	pr.SetString(priceRateStr, 10)
+	return new(big.Int).Mul(big.NewInt(amount), pr).String()
+}
+
+// bigAdd adds two numeric strings using math/big.
+func bigAdd(a, b string) string {
+	x := new(big.Int)
+	x.SetString(a, 10)
+	y := new(big.Int)
+	y.SetString(b, 10)
+	return new(big.Int).Add(x, y).String()
+}
 
 type OrderBookHandler struct {
 	cache     *cache.OrderBookCache
@@ -178,14 +195,14 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 		bids = bids[:limit]
 	}
 
-	// Convert to response levels. Data is already in nano (int64).
+	// Convert to response levels. PriceRate is now a string (numeric).
 	askLevels := make([]schemas.OrderBookLevel, len(asks))
 	for i, a := range asks {
 		askLevels[i] = schemas.OrderBookLevel{
 			PriceRate:   a.PriceRate,
 			TotalAmount: a.TotalAmount,
 			OrderCount:  a.OrderCount,
-			TotalValue:  a.TotalAmount * a.PriceRate,
+			TotalValue:  bigMul(a.TotalAmount, a.PriceRate),
 		}
 	}
 
@@ -195,33 +212,41 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 			PriceRate:   b.PriceRate,
 			TotalAmount: b.TotalAmount,
 			OrderCount:  b.OrderCount,
-			TotalValue:  b.TotalAmount * b.PriceRate,
+			TotalValue:  bigMul(b.TotalAmount, b.PriceRate),
 		}
 	}
 
 	// Compute cumulative sums
-	var cumAmt, cumVal int64
+	var cumAmt int64
+	cumVal := "0"
 	for i := range askLevels {
 		cumAmt += askLevels[i].TotalAmount
-		cumVal += askLevels[i].TotalValue
+		cumVal = bigAdd(cumVal, askLevels[i].TotalValue)
 		askLevels[i].CumulativeAmount = cumAmt
 		askLevels[i].CumulativeValue = cumVal
 	}
-	cumAmt, cumVal = 0, 0
+	cumAmt = 0
+	cumVal = "0"
 	for i := range bidLevels {
 		cumAmt += bidLevels[i].TotalAmount
-		cumVal += bidLevels[i].TotalValue
+		cumVal = bigAdd(cumVal, bidLevels[i].TotalValue)
 		bidLevels[i].CumulativeAmount = cumAmt
 		bidLevels[i].CumulativeValue = cumVal
 	}
 
-	// Compute spread and mid price
-	var spread, midPrice *int64
+	// Compute spread and mid price using math/big
+	var spread, midPrice *string
 	if len(askLevels) > 0 && len(bidLevels) > 0 {
-		s := askLevels[0].PriceRate - bidLevels[0].PriceRate
-		m := (askLevels[0].PriceRate + bidLevels[0].PriceRate) / 2
+		askPR := new(big.Int)
+		askPR.SetString(askLevels[0].PriceRate, 10)
+		bidPR := new(big.Int)
+		bidPR.SetString(bidLevels[0].PriceRate, 10)
+		s := new(big.Int).Sub(askPR, bidPR).String()
+		m := new(big.Int).Add(askPR, bidPR)
+		m.Div(m, big.NewInt(2))
+		mStr := m.String()
 		spread = &s
-		midPrice = &m
+		midPrice = &mStr
 	}
 
 	c.JSON(http.StatusOK, schemas.OrderBookResponse{

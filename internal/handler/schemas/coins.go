@@ -21,17 +21,17 @@ type CoinPriceRequestHTTP struct {
 
 // CoinPricePair represents price data for one trading pair of the requested coin.
 type CoinPricePair struct {
-	CounterCoinID       int    `json:"counter_coin_id"`
-	CounterCoinSymbol   string `json:"counter_coin_symbol"`
-	CounterCoinDecimals int    `json:"counter_coin_decimals"`
-	BestAsk             *int64 `json:"best_ask"`
-	BestBid             *int64 `json:"best_bid"`
-	MidPrice            *int64 `json:"mid_price"`
-	Spread              *int64 `json:"spread"`
-	AskTotalAmount      int64  `json:"ask_total_amount"`
-	BidTotalAmount      int64  `json:"bid_total_amount"`
-	AskOrderCount       int64  `json:"ask_order_count"`
-	BidOrderCount       int64  `json:"bid_order_count"`
+	CounterCoinID       int     `json:"counter_coin_id"`
+	CounterCoinSymbol   string  `json:"counter_coin_symbol"`
+	CounterCoinDecimals int     `json:"counter_coin_decimals"`
+	BestAsk             *string `json:"best_ask"`
+	BestBid             *string `json:"best_bid"`
+	MidPrice            *string `json:"mid_price"`
+	Spread              *string `json:"spread"`
+	AskTotalAmount      int64   `json:"ask_total_amount"`
+	BidTotalAmount      int64   `json:"bid_total_amount"`
+	AskOrderCount       int64   `json:"ask_order_count"`
+	BidOrderCount       int64   `json:"bid_order_count"`
 }
 
 // CoinPriceCoinInfo holds basic coin identification for the response.

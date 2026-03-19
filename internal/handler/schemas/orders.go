@@ -54,8 +54,8 @@ type OrderListRequestHTTP struct {
 	Status          OrderStatus `form:"status"`
 	MinAmount       int64       `form:"min_amount"`
 	MaxAmount       int64       `form:"max_amount"`
-	MinPriceRate    int64       `form:"min_price_rate"`
-	MaxPriceRate    int64       `form:"max_price_rate"`
+	MinPriceRate    string      `form:"min_price_rate"`
+	MaxPriceRate    string      `form:"max_price_rate"`
 	MinSlippage     int64       `form:"min_slippage"`
 	MaxSlippage     int64       `form:"max_slippage"`
 }

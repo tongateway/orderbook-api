@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"strings"
 
@@ -147,8 +148,8 @@ func (h *CoinPriceHandler) GetPrice(c *gin.Context) {
 
 	// Group rows by counter_coin_id to merge ask/bid sides
 	type pairData struct {
-		askBestPrice   *int64
-		bidBestPrice   *int64
+		askBestPrice   *string
+		bidBestPrice   *string
 		askTotalAmount int64
 		bidTotalAmount int64
 		askOrderCount  int64
@@ -198,10 +199,17 @@ func (h *CoinPriceHandler) GetPrice(c *gin.Context) {
 
 		// Compute mid-price and spread if both sides exist
 		if pd.askBestPrice != nil && pd.bidBestPrice != nil {
-			mid := (*pd.askBestPrice + *pd.bidBestPrice) / 2
-			spread := *pd.askBestPrice - *pd.bidBestPrice
-			pair.MidPrice = &mid
-			pair.Spread = &spread
+			askBig := new(big.Int)
+			askBig.SetString(*pd.askBestPrice, 10)
+			bidBig := new(big.Int)
+			bidBig.SetString(*pd.bidBestPrice, 10)
+			mid := new(big.Int).Add(askBig, bidBig)
+			mid.Div(mid, big.NewInt(2))
+			spread := new(big.Int).Sub(askBig, bidBig)
+			midStr := mid.String()
+			spreadStr := spread.String()
+			pair.MidPrice = &midStr
+			pair.Spread = &spreadStr
 		}
 
 		pairs = append(pairs, pair)

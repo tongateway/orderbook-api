@@ -13,7 +13,7 @@ type Order struct {
 	Status             OrderStatus `gorm:"column:status;type:orderstatus;not null;default:'created'" json:"status"`
 	Amount             *int64      `gorm:"column:amount;type:bigint" json:"amount"`
 	InitialAmount      *int64      `gorm:"column:initial_amount;type:bigint" json:"initial_amount"`
-	PriceRate          *int64      `gorm:"column:price_rate;type:bigint" json:"price_rate"`
+	PriceRate          *string     `gorm:"column:price_rate;type:numeric" json:"price_rate"`
 	Slippage           *int64      `gorm:"column:slippage;type:bigint" json:"slippage"`
 	FromCoinID         int         `gorm:"column:from_coin_id;type:integer" json:"from_coin_id"`
 	ToCoinID           int         `gorm:"column:to_coin_id;type:integer" json:"to_coin_id"`

@@ -38,8 +38,8 @@ func NewOrderHandler(repo repository.OrderRepository) *OrderHandler {
 // @Param        status    query      string  false  "Status (created, deployed, cancelled, completed, failed, pending_match, closed)"
 // @Param        min_amount    query      int64     false  "Min amount"
 // @Param        max_amount    query      int64     false  "Max amount"
-// @Param        min_price_rate    query      int64     false  "Min price rate"
-// @Param        max_price_rate    query      int64     false  "Max price rate"
+// @Param        min_price_rate    query      string    false  "Min price rate (numeric string)"
+// @Param        max_price_rate    query      string    false  "Max price rate (numeric string)"
 // @Param        min_slippage    query      int64     false  "Min slippage"
 // @Param        max_slippage    query      int64     false  "Max slippage"
 // @Success      200   {object}  map[string]interface{}
@@ -117,10 +117,10 @@ func (h *OrderHandler) List(c *gin.Context) {
 	if orderListReq.MaxAmount > 0 {
 		filters.MaxAmount = &orderListReq.MaxAmount
 	}
-	if orderListReq.MinPriceRate > 0 {
+	if orderListReq.MinPriceRate != "" {
 		filters.MinPriceRate = &orderListReq.MinPriceRate
 	}
-	if orderListReq.MaxPriceRate > 0 {
+	if orderListReq.MaxPriceRate != "" {
 		filters.MaxPriceRate = &orderListReq.MaxPriceRate
 	}
 	if orderListReq.MinSlippage > 0 {

@@ -25,8 +25,8 @@ type OrderFilters struct {
 	Status          *string
 	MinAmount       *int64
 	MaxAmount       *int64
-	MinPriceRate    *int64
-	MaxPriceRate    *int64
+	MinPriceRate    *string
+	MaxPriceRate    *string
 	MinSlippage     *int64
 	MaxSlippage     *int64
 	OwnerRawAddress *string
@@ -47,9 +47,9 @@ type DeployedTotalRow struct {
 
 // OrderBookLevel represents an aggregated price level for the order book
 type OrderBookLevel struct {
-	PriceRate   int64 `json:"price_rate"`
-	TotalAmount int64 `json:"total_amount"`
-	OrderCount  int64 `json:"order_count"`
+	PriceRate   string `json:"price_rate"`
+	TotalAmount int64  `json:"total_amount"`
+	OrderCount  int64  `json:"order_count"`
 }
 
 // TradingStatsRow represents one row of trading statistics grouped by status.
@@ -64,7 +64,7 @@ type TradingStatsRow struct {
 type CoinPairPriceRow struct {
 	CounterCoinID int    `json:"counter_coin_id"`
 	Side          string `json:"side"`
-	BestPrice     int64  `json:"best_price"`
+	BestPrice     string `json:"best_price"`
 	OrderCount    int64  `json:"order_count"`
 	TotalAmount   int64  `json:"total_amount"`
 }
@@ -130,10 +130,10 @@ func (r *orderRepository) GetList(ctx context.Context, offset int, limit int, or
 		dbq = dbq.Where("amount <= ?", *filters.MaxAmount)
 	}
 	if filters.MinPriceRate != nil {
-		dbq = dbq.Where("price_rate >= ?", *filters.MinPriceRate)
+		dbq = dbq.Where("price_rate >= ?::numeric", *filters.MinPriceRate)
 	}
 	if filters.MaxPriceRate != nil {
-		dbq = dbq.Where("price_rate <= ?", *filters.MaxPriceRate)
+		dbq = dbq.Where("price_rate <= ?::numeric", *filters.MaxPriceRate)
 	}
 	if filters.MinSlippage != nil {
 		dbq = dbq.Where("slippage >= ?", *filters.MinSlippage)

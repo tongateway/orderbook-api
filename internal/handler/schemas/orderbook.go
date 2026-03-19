@@ -14,12 +14,12 @@ type OrderBookRequestHTTP struct {
 
 // OrderBookLevel represents a single price level in the order book
 type OrderBookLevel struct {
-	PriceRate        int64 `json:"price_rate"`
-	TotalAmount      int64 `json:"total_amount"`
-	OrderCount       int64 `json:"order_count"`
-	TotalValue       int64 `json:"total_value"`
-	CumulativeAmount int64 `json:"cumulative_amount"`
-	CumulativeValue  int64 `json:"cumulative_value"`
+	PriceRate        string `json:"price_rate"`
+	TotalAmount      int64  `json:"total_amount"`
+	OrderCount       int64  `json:"order_count"`
+	TotalValue       string `json:"total_value"`
+	CumulativeAmount int64  `json:"cumulative_amount"`
+	CumulativeValue  string `json:"cumulative_value"`
 }
 
 // OrderBookResponse represents the full order book for a trading pair
@@ -28,8 +28,8 @@ type OrderBookResponse struct {
 	ToSymbol     string           `json:"to_symbol"`
 	FromDecimals int              `json:"from_decimals"`
 	ToDecimals   int              `json:"to_decimals"`
-	Spread       *int64            `json:"spread"`
-	MidPrice     *int64            `json:"mid_price"`
+	Spread       *string          `json:"spread"`
+	MidPrice     *string          `json:"mid_price"`
 	Asks         []OrderBookLevel `json:"asks"`
 	Bids         []OrderBookLevel `json:"bids"`
 }
