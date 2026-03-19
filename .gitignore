@@ -6,6 +6,7 @@
 *.dylib
 ./api
 main
+keygen
 configs/config.yaml
 configs/config.docker.yaml
 

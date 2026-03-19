@@ -233,7 +233,7 @@ func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID
 
 	dbq := session.WithContext(ctx).
 		Model(&dbmodels.Order{}).
-		Where("status = 'deployed'")
+		Where("status IN ('deployed', 'pending_match')")
 
 	// TON has NULL coin_id in orders table
 	if fromCoinID == 0 {
