@@ -30,9 +30,10 @@ type Services struct {
 	APIKeysRepo repository.APIKeysRepository
 
 	// Caches
-	OrderBookCache    *cache.OrderBookCache
-	TradingStatsCache *cache.TradingStatsCache
-	CoinPriceCache    *cache.CoinPriceCache
+	OrderBookCache         *cache.OrderBookCache
+	TradingStatsCache      *cache.TradingStatsCache
+	CoinPriceCache         *cache.CoinPriceCache
+	AgentLeaderboardCache  *cache.AgentLeaderboardCache
 
 	Repositories *repository.Repositories
 }
@@ -91,6 +92,13 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		30*time.Second,
 	)
 
+	// Initialize agent leaderboard cache: Redis 30s
+	agentLeaderboardCache := cache.NewAgentLeaderboardCache(
+		redisClient,
+		orderRepo.GetAgentLeaderboard,
+		30*time.Second,
+	)
+
 	return &Services{
 		DB:                db,
 		Redis:             redisClient,
@@ -100,8 +108,9 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		APIKeysRepo:       apiKeysRepo,
 		OrderBookCache:    orderBookCache,
 		TradingStatsCache: tradingStatsCache,
-		CoinPriceCache:    coinPriceCache,
-		Repositories:      repositories,
+		CoinPriceCache:         coinPriceCache,
+		AgentLeaderboardCache:  agentLeaderboardCache,
+		Repositories:           repositories,
 	}, nil
 }
 

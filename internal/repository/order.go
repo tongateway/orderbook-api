@@ -69,6 +69,17 @@ type CoinPairPriceRow struct {
 	TotalAmount   int64  `json:"total_amount"`
 }
 
+// AgentLeaderboardRow represents one agent's aggregated trading stats for a coin.
+type AgentLeaderboardRow struct {
+	RawAddress      string `json:"raw_address"`
+	TotalOrders     int64  `json:"total_orders"`
+	CompletedOrders int64  `json:"completed_orders"`
+	DeployedOrders  int64  `json:"deployed_orders"`
+	CompletedVolume int64  `json:"completed_volume"`
+	BuyVolume       int64  `json:"buy_volume"`
+	SellVolume      int64  `json:"sell_volume"`
+}
+
 type OrderRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Order, error)
@@ -77,6 +88,7 @@ type OrderRepository interface {
 	GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error)
 	GetTradingStats(ctx context.Context, fromCoinID, toCoinID int, since time.Time) ([]TradingStatsRow, error)
 	GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error)
+	GetAgentLeaderboard(ctx context.Context, coinID int) ([]AgentLeaderboardRow, error)
 }
 
 type orderRepository struct {
@@ -333,6 +345,50 @@ func (r *orderRepository) GetCoinPriceSummary(ctx context.Context, coinID int) (
 		GROUP BY COALESCE(from_coin_id, 0)
 	`, fromCondition, toCondition)
 
+	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return rows, nil
+}
+
+// GetAgentLeaderboard returns aggregated trading stats per agent (wallet) for orders involving the given coin.
+// coinID = 0 means TON (NULL in DB).
+func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) ([]AgentLeaderboardRow, error) {
+	session, err := middleware.GetDBSessionFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var coinCondition, fromCondition, toCondition string
+	if coinID == 0 {
+		coinCondition = "(o.from_coin_id IS NULL OR o.to_coin_id IS NULL)"
+		fromCondition = "o.from_coin_id IS NULL"
+		toCondition = "o.to_coin_id IS NULL"
+	} else {
+		coinCondition = fmt.Sprintf("(o.from_coin_id = %d OR o.to_coin_id = %d)", coinID, coinID)
+		fromCondition = fmt.Sprintf("o.from_coin_id = %d", coinID)
+		toCondition = fmt.Sprintf("o.to_coin_id = %d", coinID)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			w.raw_address,
+			COUNT(*) AS total_orders,
+			COUNT(*) FILTER (WHERE o.status = 'completed') AS completed_orders,
+			COUNT(*) FILTER (WHERE o.status = 'deployed') AS deployed_orders,
+			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed'), 0) AS completed_volume,
+			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND %s), 0) AS buy_volume,
+			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND %s), 0) AS sell_volume
+		FROM orders o
+		JOIN wallets w ON o.wallet_id = w.id
+		WHERE %s
+		GROUP BY w.raw_address
+		ORDER BY completed_volume DESC, completed_orders DESC
+	`, toCondition, fromCondition, coinCondition)
+
+	var rows []AgentLeaderboardRow
 	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	if err != nil {
 		return nil, err

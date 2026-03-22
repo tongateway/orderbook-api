@@ -15,6 +15,7 @@ func RegisterHandlers(router *gin.RouterGroup, svc *services.Services) {
 	orderHandler := NewOrderHandler(svc.OrderRepo)
 	orderBookHandler := NewOrderBookHandler(svc.OrderBookCache, svc.CoinsRepo)
 	tradingStatsHandler := NewTradingStatsHandler(svc.TradingStatsCache, svc.CoinsRepo)
+	agentLeaderboardHandler := NewAgentLeaderboardHandler(svc.AgentLeaderboardCache, svc.CoinsRepo)
 	vaultHandler := NewVaultHandler(svc.VaultRepo)
 
 	// Register routes
@@ -26,6 +27,7 @@ func RegisterHandlers(router *gin.RouterGroup, svc *services.Services) {
 	router.GET("/orders/stats", orderHandler.Stats)
 	router.GET("/orders/deployed-totals", orderHandler.DeployedTotals)
 	router.GET("/orders/trading-stats", tradingStatsHandler.GetTradingStats)
+	router.GET("/orders/agent-leaderboard", agentLeaderboardHandler.GetAgentLeaderboard)
 	router.GET("/orders/:id", orderHandler.GetByID)
 	router.GET("/vaults", vaultHandler.List)
 	router.GET("/vaults/:id", vaultHandler.GetByID)
