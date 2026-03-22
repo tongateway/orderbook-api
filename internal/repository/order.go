@@ -80,11 +80,18 @@ type AgentLeaderboardRow struct {
 	SellVolume      int64  `json:"sell_volume"`
 }
 
+// BatchContextResult holds orders and deployed totals for a single wallet address.
+type BatchContextResult struct {
+	Orders         []dbmodels.Order  `json:"orders"`
+	DeployedTotals []DeployedTotalRow `json:"deployed_totals"`
+}
+
 type OrderRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Order, error)
 	GetStatsByWalletAddress(ctx context.Context, walletAddress string) ([]OrderStats, int64, error)
 	GetDeployedTotalsByWalletAddress(ctx context.Context, walletAddress string) ([]DeployedTotalRow, error)
+	GetBatchContext(ctx context.Context, walletAddresses []string, status string) (map[string]*BatchContextResult, error)
 	GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error)
 	GetTradingStats(ctx context.Context, fromCoinID, toCoinID int, since time.Time) ([]TradingStatsRow, error)
 	GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error)
@@ -395,4 +402,117 @@ func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) (
 	}
 
 	return rows, nil
+}
+
+// GetBatchContext fetches orders and deployed totals for multiple wallet addresses in bulk.
+// It executes two queries (orders + deployed totals) using IN clauses instead of N per-wallet queries.
+func (r *orderRepository) GetBatchContext(ctx context.Context, walletAddresses []string, status string) (map[string]*BatchContextResult, error) {
+	if len(walletAddresses) == 0 {
+		return map[string]*BatchContextResult{}, nil
+	}
+
+	session, err := middleware.GetDBSessionFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize result map for all requested addresses
+	results := make(map[string]*BatchContextResult, len(walletAddresses))
+	for _, addr := range walletAddresses {
+		results[addr] = &BatchContextResult{
+			Orders:         []dbmodels.Order{},
+			DeployedTotals: []DeployedTotalRow{},
+		}
+	}
+
+	// --- Query 1: Fetch orders for all wallets in one query ---
+	var orders []dbmodels.Order
+	dbq := session.WithContext(ctx).
+		Joins("JOIN wallets ON orders.wallet_id = wallets.id").
+		Preload("Vault").
+		Where("wallets.raw_address IN ?", walletAddresses)
+
+	if status != "" {
+		dbq = dbq.Where("orders.status = ?", status)
+	}
+
+	if err := dbq.Find(&orders).Error; err != nil {
+		return nil, fmt.Errorf("batch orders query failed: %w", err)
+	}
+
+	// We need the wallet raw_address for each order to group them.
+	// Since the JOIN doesn't populate the Wallet relation, query the wallet mapping.
+	walletIDToAddr := make(map[int]string)
+	if len(orders) > 0 {
+		walletIDs := make([]int, 0, len(orders))
+		seen := make(map[int]bool)
+		for _, o := range orders {
+			if o.WalletID != nil && !seen[*o.WalletID] {
+				walletIDs = append(walletIDs, *o.WalletID)
+				seen[*o.WalletID] = true
+			}
+		}
+
+		type walletRow struct {
+			ID         int    `gorm:"column:id"`
+			RawAddress string `gorm:"column:raw_address"`
+		}
+		var wallets []walletRow
+		if err := session.WithContext(ctx).Table("wallets").
+			Select("id, raw_address").
+			Where("id IN ?", walletIDs).
+			Scan(&wallets).Error; err != nil {
+			return nil, fmt.Errorf("batch wallet lookup failed: %w", err)
+		}
+		for _, w := range wallets {
+			walletIDToAddr[w.ID] = w.RawAddress
+		}
+	}
+
+	// Group orders by wallet address
+	for _, o := range orders {
+		if o.WalletID == nil {
+			continue
+		}
+		addr, ok := walletIDToAddr[*o.WalletID]
+		if !ok {
+			continue
+		}
+		if r, ok := results[addr]; ok {
+			r.Orders = append(r.Orders, o)
+		}
+	}
+
+	// --- Query 2: Fetch deployed totals for all wallets in one query ---
+	var totalRows []struct {
+		RawAddress  string  `gorm:"column:raw_address"`
+		CoinID      int     `gorm:"column:coin_id"`
+		Symbol      *string `gorm:"column:symbol"`
+		Name        *string `gorm:"column:name"`
+		TotalAmount int64   `gorm:"column:total_amount"`
+	}
+	err = session.WithContext(ctx).Model(&dbmodels.Order{}).
+		Joins("JOIN wallets ON orders.wallet_id = wallets.id").
+		Joins("LEFT JOIN coins ON orders.from_coin_id = coins.id").
+		Where("wallets.raw_address IN ? AND orders.status IN ('deployed', 'pending_match')", walletAddresses).
+		Select("wallets.raw_address AS raw_address, COALESCE(orders.from_coin_id, 0) AS coin_id, COALESCE(coins.symbol, 'TON') AS symbol, COALESCE(coins.name, 'Toncoin') AS name, COALESCE(SUM(orders.amount), 0) AS total_amount").
+		Group("wallets.raw_address, COALESCE(orders.from_coin_id, 0), COALESCE(coins.symbol, 'TON'), COALESCE(coins.name, 'Toncoin')").
+		Scan(&totalRows).Error
+	if err != nil {
+		return nil, fmt.Errorf("batch deployed totals query failed: %w", err)
+	}
+
+	// Group deployed totals by wallet address
+	for _, row := range totalRows {
+		if r, ok := results[row.RawAddress]; ok {
+			r.DeployedTotals = append(r.DeployedTotals, DeployedTotalRow{
+				CoinID:      row.CoinID,
+				Symbol:      row.Symbol,
+				Name:        row.Name,
+				TotalAmount: row.TotalAmount,
+			})
+		}
+	}
+
+	return results, nil
 }

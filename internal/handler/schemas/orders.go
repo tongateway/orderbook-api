@@ -43,6 +43,23 @@ type OrderDeployedTotalsResponse struct {
 	Totals        []OrderDeployedTotalsItem `json:"totals"`
 }
 
+// BatchContextRequest is the POST body for /orders/batch-context
+type BatchContextRequest struct {
+	WalletAddresses []string `json:"wallet_addresses" binding:"required,min=1,max=1000"`
+	Status          string   `json:"status"`
+}
+
+// BatchContextWalletResult holds orders and deployed totals for a single wallet.
+type BatchContextWalletResult struct {
+	Orders         interface{} `json:"orders"`
+	DeployedTotals interface{} `json:"deployed_totals"`
+}
+
+// BatchContextResponse is the response for /orders/batch-context
+type BatchContextResponse struct {
+	Results map[string]*BatchContextWalletResult `json:"results"`
+}
+
 type OrderListRequestHTTP struct {
 	Offset          int64       `form:"offset"`
 	Limit           int64       `form:"limit"`

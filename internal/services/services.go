@@ -34,6 +34,7 @@ type Services struct {
 	TradingStatsCache      *cache.TradingStatsCache
 	CoinPriceCache         *cache.CoinPriceCache
 	AgentLeaderboardCache  *cache.AgentLeaderboardCache
+	BatchContextCache      *cache.BatchContextCache
 
 	Repositories *repository.Repositories
 }
@@ -99,6 +100,14 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		30*time.Second,
 	)
 
+	// Initialize batch context cache: L1 = 5s in-memory, L2 = 15s Redis
+	batchContextCache := cache.NewBatchContextCache(
+		redisClient,
+		orderRepo.GetBatchContext,
+		5*time.Second,
+		15*time.Second,
+	)
+
 	return &Services{
 		DB:                db,
 		Redis:             redisClient,
@@ -110,6 +119,7 @@ func NewServices(cfg *config.Config) (*Services, error) {
 		TradingStatsCache: tradingStatsCache,
 		CoinPriceCache:         coinPriceCache,
 		AgentLeaderboardCache:  agentLeaderboardCache,
+		BatchContextCache:      batchContextCache,
 		Repositories:           repositories,
 	}, nil
 }
@@ -120,6 +130,9 @@ func (s *Services) Close() error {
 
 	if s.OrderBookCache != nil {
 		s.OrderBookCache.Close()
+	}
+	if s.BatchContextCache != nil {
+		s.BatchContextCache.Close()
 	}
 
 	if s.Redis != nil {

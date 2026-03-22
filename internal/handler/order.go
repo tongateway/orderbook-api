@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"api/internal/cache"
 	"api/internal/handler/schemas"
 	"api/internal/middleware"
 	"api/internal/repository"
@@ -338,4 +339,82 @@ func (h *OrderHandler) GetByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, order)
+}
+
+// BatchContextHandler handles the batch context endpoint backed by a cache.
+type BatchContextHandler struct {
+	cache *cache.BatchContextCache
+}
+
+func NewBatchContextHandler(c *cache.BatchContextCache) *BatchContextHandler {
+	return &BatchContextHandler{cache: c}
+}
+
+// @Summary      Get orders and deployed totals for multiple wallets in one call
+// @Description  Batch endpoint that returns deployed orders and deployed totals for up to 1000 wallet addresses.
+// @Tags         orders
+// @Accept       json
+// @Produce      json
+// @Param        body  body  schemas.BatchContextRequest  true  "Batch request"
+// @Success      200   {object}  schemas.BatchContextResponse
+// @Failure      400   {object}  map[string]interface{}
+// @Failure      500   {object}  map[string]interface{}
+// @Router       /orders/batch-context [post]
+func (h *BatchContextHandler) BatchContext(c *gin.Context) {
+	var req schemas.BatchContextRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Set("error", err)
+		slog.WarnContext(c.Request.Context(), "invalid batch context request body", "error", err)
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(req.WalletAddresses) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "wallet_addresses must not be empty"})
+		return
+	}
+	if len(req.WalletAddresses) > 1000 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "wallet_addresses must not exceed 1000"})
+		return
+	}
+
+	// Validate and normalize all addresses
+	normalized := make([]string, 0, len(req.WalletAddresses))
+	for _, raw := range req.WalletAddresses {
+		rawAddr, err := addr.ParseRawAddr(raw)
+		if err != nil {
+			c.Set("error", err)
+			slog.WarnContext(c.Request.Context(), "invalid wallet address in batch", "address", raw, "error", err)
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid wallet address: " + raw})
+			return
+		}
+		normalized = append(normalized, rawAddr.StringRaw())
+	}
+
+	ctx := c.Request.Context()
+	results, err := h.cache.Get(ctx, normalized, req.Status)
+	if err != nil {
+		c.Set("error", err)
+		fullErr := middleware.FormatErrorFull(err)
+		slog.ErrorContext(ctx, "failed to get batch context",
+			"error", err,
+			"error_full", fullErr,
+			"wallet_count", len(normalized),
+		)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Convert to response schema
+	resp := schemas.BatchContextResponse{
+		Results: make(map[string]*schemas.BatchContextWalletResult, len(results)),
+	}
+	for addr, r := range results {
+		resp.Results[addr] = &schemas.BatchContextWalletResult{
+			Orders:         r.Orders,
+			DeployedTotals: r.DeployedTotals,
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
