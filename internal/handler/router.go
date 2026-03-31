@@ -1,14 +1,35 @@
 package handler
 
 import (
+	"context"
+	"net/http"
+	"time"
+
 	"api/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
 
+const requestTimeout = 15 * time.Second
+
+// RequestTimeoutMiddleware adds a deadline to the request context so that
+// long-running database queries are cancelled automatically.
+func RequestTimeoutMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), requestTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+		if ctx.Err() == context.DeadlineExceeded {
+			c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{"error": "request timeout"})
+		}
+	}
+}
+
 // RegisterHandlers registers all HTTP handlers with the router
 // Repositories are provided through the service locator pattern
 func RegisterHandlers(router *gin.RouterGroup, svc *services.Services) {
+	router.Use(RequestTimeoutMiddleware())
 	// Initialize handlers with repositories from service locator
 	coinsHandler := NewCoinsHandler(svc.CoinsRepo)
 	coinPriceHandler := NewCoinPriceHandler(svc.CoinPriceCache, svc.CoinsRepo)

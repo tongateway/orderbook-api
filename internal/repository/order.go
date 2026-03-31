@@ -336,34 +336,42 @@ func (r *orderRepository) GetCoinPriceSummary(ctx context.Context, coinID int) (
 
 	var rows []CoinPairPriceRow
 
-	// Build the condition for this coin (TON = NULL)
-	var fromCondition, toCondition string
 	if coinID == 0 {
-		fromCondition = "from_coin_id IS NULL"
-		toCondition = "to_coin_id IS NULL"
+		query := `
+			SELECT COALESCE(to_coin_id, 0) AS counter_coin_id, 'ask' AS side,
+				MIN(price_rate) AS best_price, COUNT(*) AS order_count,
+				COALESCE(SUM(amount), 0) AS total_amount
+			FROM orders
+			WHERE status = 'deployed' AND from_coin_id IS NULL
+			GROUP BY COALESCE(to_coin_id, 0)
+			UNION ALL
+			SELECT COALESCE(from_coin_id, 0) AS counter_coin_id, 'bid' AS side,
+				MAX(price_rate) AS best_price, COUNT(*) AS order_count,
+				COALESCE(SUM(amount), 0) AS total_amount
+			FROM orders
+			WHERE status = 'deployed' AND to_coin_id IS NULL
+			GROUP BY COALESCE(from_coin_id, 0)
+		`
+		err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	} else {
-		fromCondition = fmt.Sprintf("from_coin_id = %d", coinID)
-		toCondition = fmt.Sprintf("to_coin_id = %d", coinID)
+		query := `
+			SELECT COALESCE(to_coin_id, 0) AS counter_coin_id, 'ask' AS side,
+				MIN(price_rate) AS best_price, COUNT(*) AS order_count,
+				COALESCE(SUM(amount), 0) AS total_amount
+			FROM orders
+			WHERE status = 'deployed' AND from_coin_id = $1
+			GROUP BY COALESCE(to_coin_id, 0)
+			UNION ALL
+			SELECT COALESCE(from_coin_id, 0) AS counter_coin_id, 'bid' AS side,
+				MAX(price_rate) AS best_price, COUNT(*) AS order_count,
+				COALESCE(SUM(amount), 0) AS total_amount
+			FROM orders
+			WHERE status = 'deployed' AND to_coin_id = $2
+			GROUP BY COALESCE(from_coin_id, 0)
+		`
+		err = session.WithContext(ctx).Raw(query, coinID, coinID).Scan(&rows).Error
 	}
 
-	// Use raw SQL for UNION ALL query
-	query := fmt.Sprintf(`
-		SELECT COALESCE(to_coin_id, 0) AS counter_coin_id, 'ask' AS side,
-			MIN(price_rate) AS best_price, COUNT(*) AS order_count,
-			COALESCE(SUM(amount), 0) AS total_amount
-		FROM orders
-		WHERE status = 'deployed' AND %s
-		GROUP BY COALESCE(to_coin_id, 0)
-		UNION ALL
-		SELECT COALESCE(from_coin_id, 0) AS counter_coin_id, 'bid' AS side,
-			MAX(price_rate) AS best_price, COUNT(*) AS order_count,
-			COALESCE(SUM(amount), 0) AS total_amount
-		FROM orders
-		WHERE status = 'deployed' AND %s
-		GROUP BY COALESCE(from_coin_id, 0)
-	`, fromCondition, toCondition)
-
-	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -379,35 +387,44 @@ func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) (
 		return nil, err
 	}
 
-	var coinCondition, fromCondition, toCondition string
+	var rows []AgentLeaderboardRow
+
 	if coinID == 0 {
-		coinCondition = "(o.from_coin_id IS NULL OR o.to_coin_id IS NULL)"
-		fromCondition = "o.from_coin_id IS NULL"
-		toCondition = "o.to_coin_id IS NULL"
+		query := `
+			SELECT
+				w.raw_address,
+				COUNT(*) AS total_orders,
+				COUNT(*) FILTER (WHERE o.status = 'completed') AS completed_orders,
+				COUNT(*) FILTER (WHERE o.status = 'deployed') AS deployed_orders,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed'), 0) AS completed_volume,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND o.to_coin_id IS NULL), 0) AS buy_volume,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND o.from_coin_id IS NULL), 0) AS sell_volume
+			FROM orders o
+			JOIN wallets w ON o.wallet_id = w.id
+			WHERE (o.from_coin_id IS NULL OR o.to_coin_id IS NULL)
+			GROUP BY w.raw_address
+			ORDER BY completed_volume DESC, completed_orders DESC
+		`
+		err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	} else {
-		coinCondition = fmt.Sprintf("(o.from_coin_id = %d OR o.to_coin_id = %d)", coinID, coinID)
-		fromCondition = fmt.Sprintf("o.from_coin_id = %d", coinID)
-		toCondition = fmt.Sprintf("o.to_coin_id = %d", coinID)
+		query := `
+			SELECT
+				w.raw_address,
+				COUNT(*) AS total_orders,
+				COUNT(*) FILTER (WHERE o.status = 'completed') AS completed_orders,
+				COUNT(*) FILTER (WHERE o.status = 'deployed') AS deployed_orders,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed'), 0) AS completed_volume,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND o.to_coin_id = $1), 0) AS buy_volume,
+				COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND o.from_coin_id = $2), 0) AS sell_volume
+			FROM orders o
+			JOIN wallets w ON o.wallet_id = w.id
+			WHERE (o.from_coin_id = $3 OR o.to_coin_id = $4)
+			GROUP BY w.raw_address
+			ORDER BY completed_volume DESC, completed_orders DESC
+		`
+		err = session.WithContext(ctx).Raw(query, coinID, coinID, coinID, coinID).Scan(&rows).Error
 	}
 
-	query := fmt.Sprintf(`
-		SELECT
-			w.raw_address,
-			COUNT(*) AS total_orders,
-			COUNT(*) FILTER (WHERE o.status = 'completed') AS completed_orders,
-			COUNT(*) FILTER (WHERE o.status = 'deployed') AS deployed_orders,
-			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed'), 0) AS completed_volume,
-			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND %s), 0) AS buy_volume,
-			COALESCE(SUM(o.initial_amount) FILTER (WHERE o.status = 'completed' AND %s), 0) AS sell_volume
-		FROM orders o
-		JOIN wallets w ON o.wallet_id = w.id
-		WHERE %s
-		GROUP BY w.raw_address
-		ORDER BY completed_volume DESC, completed_orders DESC
-	`, toCondition, fromCondition, coinCondition)
-
-	var rows []AgentLeaderboardRow
-	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -424,25 +441,42 @@ func (r *orderRepository) GetCandles(ctx context.Context, fromCoinID, toCoinID i
 		return nil, err
 	}
 
-	var fromCond, toCond string
-	if fromCoinID == 0 {
-		fromCond = "from_coin_id IS NULL"
-	} else {
-		fromCond = fmt.Sprintf("from_coin_id = %d", fromCoinID)
-	}
-	if toCoinID == 0 {
-		toCond = "to_coin_id IS NULL"
-	} else {
-		toCond = fmt.Sprintf("to_coin_id = %d", toCoinID)
-	}
-
 	if limit <= 0 || limit > 1000 {
 		limit = 500
 	}
 
+	// Build parameterized query. The coin conditions use IS NULL for TON (id=0)
+	// or parameterized values for jettons. intervalSec and limit are safe int types
+	// validated above, so they can be interpolated directly.
+	buildCoinCond := func(col string, coinID int, paramIdx *int, args *[]interface{}) string {
+		if coinID == 0 {
+			return col + " IS NULL"
+		}
+		*paramIdx++
+		*args = append(*args, coinID)
+		return fmt.Sprintf("%s = $%d", col, *paramIdx)
+	}
+
+	paramIdx := 0
+	var args []interface{}
+	fromCond := buildCoinCond("from_coin_id", fromCoinID, &paramIdx, &args)
+	toCond := buildCoinCond("to_coin_id", toCoinID, &paramIdx, &args)
+
+	paramIdx++
+	args = append(args, since)
+	sinceParam := fmt.Sprintf("$%d", paramIdx)
+
+	paramIdx++
+	args = append(args, intervalSec)
+	intervalParam := fmt.Sprintf("$%d", paramIdx)
+
+	paramIdx++
+	args = append(args, limit)
+	limitParam := fmt.Sprintf("$%d", paramIdx)
+
 	query := fmt.Sprintf(`
 		SELECT
-			(floor(extract(epoch FROM created_at) / %d) * %d)::bigint AS bucket_ts,
+			(floor(extract(epoch FROM created_at) / %s) * %s)::bigint AS bucket_ts,
 			(array_agg(price_rate ORDER BY created_at ASC))[1]::text AS open,
 			MAX(price_rate)::text AS high,
 			MIN(price_rate)::text AS low,
@@ -451,15 +485,15 @@ func (r *orderRepository) GetCandles(ctx context.Context, fromCoinID, toCoinID i
 		FROM orders
 		WHERE status IN ('completed', 'closed')
 		  AND %s AND %s
-		  AND created_at >= $1
+		  AND created_at >= %s
 		  AND price_rate IS NOT NULL
 		GROUP BY bucket_ts
 		ORDER BY bucket_ts ASC
-		LIMIT %d
-	`, intervalSec, intervalSec, fromCond, toCond, limit)
+		LIMIT %s
+	`, intervalParam, intervalParam, fromCond, toCond, sinceParam, limitParam)
 
 	var rows []CandleRow
-	err = session.WithContext(ctx).Raw(query, since).Scan(&rows).Error
+	err = session.WithContext(ctx).Raw(query, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

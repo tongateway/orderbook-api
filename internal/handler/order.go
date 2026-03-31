@@ -2,6 +2,7 @@ package handler
 
 import (
 	"log/slog"
+	"math/big"
 	"net/http"
 	"strings"
 
@@ -119,9 +120,17 @@ func (h *OrderHandler) List(c *gin.Context) {
 		filters.MaxAmount = &orderListReq.MaxAmount
 	}
 	if orderListReq.MinPriceRate != "" {
+		if _, ok := new(big.Rat).SetString(orderListReq.MinPriceRate); !ok {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "min_price_rate must be a valid number"})
+			return
+		}
 		filters.MinPriceRate = &orderListReq.MinPriceRate
 	}
 	if orderListReq.MaxPriceRate != "" {
+		if _, ok := new(big.Rat).SetString(orderListReq.MaxPriceRate); !ok {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "max_price_rate must be a valid number"})
+			return
+		}
 		filters.MaxPriceRate = &orderListReq.MaxPriceRate
 	}
 	if orderListReq.MinSlippage > 0 {
