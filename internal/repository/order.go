@@ -86,6 +86,16 @@ type BatchContextResult struct {
 	DeployedTotals []DeployedTotalRow `json:"deployed_totals"`
 }
 
+// CandleRow represents a single OHLCV candle built from completed orders.
+type CandleRow struct {
+	BucketTs int64  `json:"bucket_ts"`
+	Open     string `json:"open"`
+	High     string `json:"high"`
+	Low      string `json:"low"`
+	Close    string `json:"close"`
+	Volume   int64  `json:"volume"`
+}
+
 type OrderRepository interface {
 	GetList(ctx context.Context, offset int, limit int, orderClauses []string, order string, filters OrderFilters) ([]dbmodels.Order, error)
 	GetByID(ctx context.Context, id uint64) (*dbmodels.Order, error)
@@ -96,6 +106,7 @@ type OrderRepository interface {
 	GetTradingStats(ctx context.Context, fromCoinID, toCoinID int, since time.Time) ([]TradingStatsRow, error)
 	GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error)
 	GetAgentLeaderboard(ctx context.Context, coinID int) ([]AgentLeaderboardRow, error)
+	GetCandles(ctx context.Context, fromCoinID, toCoinID int, intervalSec int64, since time.Time, limit int) ([]CandleRow, error)
 }
 
 type orderRepository struct {
@@ -397,6 +408,58 @@ func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) (
 
 	var rows []AgentLeaderboardRow
 	err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return rows, nil
+}
+
+// GetCandles builds OHLCV candles from completed/closed orders for a trading pair.
+// intervalSec is the candle width in seconds (e.g. 60 for 1m, 3600 for 1h).
+// Candles are built by bucketing order.created_at into time windows and aggregating price_rate / initial_amount.
+func (r *orderRepository) GetCandles(ctx context.Context, fromCoinID, toCoinID int, intervalSec int64, since time.Time, limit int) ([]CandleRow, error) {
+	session, err := middleware.GetDBSessionFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var fromCond, toCond string
+	if fromCoinID == 0 {
+		fromCond = "from_coin_id IS NULL"
+	} else {
+		fromCond = fmt.Sprintf("from_coin_id = %d", fromCoinID)
+	}
+	if toCoinID == 0 {
+		toCond = "to_coin_id IS NULL"
+	} else {
+		toCond = fmt.Sprintf("to_coin_id = %d", toCoinID)
+	}
+
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			(floor(extract(epoch FROM created_at) / %d) * %d)::bigint AS bucket_ts,
+			(array_agg(price_rate ORDER BY created_at ASC))[1]::text AS open,
+			MAX(price_rate)::text AS high,
+			MIN(price_rate)::text AS low,
+			(array_agg(price_rate ORDER BY created_at DESC))[1]::text AS close,
+			COALESCE(SUM(initial_amount), 0) AS volume
+		FROM orders
+		WHERE status IN ('completed', 'closed')
+		  AND %s AND %s
+		  AND created_at >= $1
+		  AND price_rate IS NOT NULL
+		GROUP BY bucket_ts
+		ORDER BY bucket_ts ASC
+		LIMIT %d
+	`, intervalSec, intervalSec, fromCond, toCond, limit)
+
+	var rows []CandleRow
+	err = session.WithContext(ctx).Raw(query, since).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
