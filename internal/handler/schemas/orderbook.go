@@ -53,6 +53,8 @@ type PeriodStats struct {
 	Period      string                 `json:"period"`
 	TotalOrders int64                  `json:"total_orders"`
 	TotalVolume int64                  `json:"total_volume"`
+	Open        StatusStats            `json:"open"`
+	Filled      StatusStats            `json:"filled"`
 	ByStatus    map[string]StatusStats `json:"by_status"`
 }
 

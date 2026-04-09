@@ -144,19 +144,33 @@ func (h *TradingStatsHandler) GetTradingStats(c *gin.Context) {
 		byStatus := make(map[string]schemas.StatusStats)
 		var totalOrders int64
 		var totalVolume int64
+		var open, filled schemas.StatusStats
 		for _, r := range rows {
-			byStatus[r.Status] = schemas.StatusStats{
+			stat := schemas.StatusStats{
 				Count:  r.Count,
 				Volume: r.Volume,
 			}
+			byStatus[r.Status] = stat
 			totalOrders += r.Count
 			totalVolume += r.Volume
+
+			// open = deployed + pending_match
+			if r.Status == "deployed" || r.Status == "pending_match" {
+				open.Count += r.Count
+				open.Volume += r.Volume
+			}
+			// filled = completed
+			if r.Status == "completed" {
+				filled = stat
+			}
 		}
 
 		periods = append(periods, schemas.PeriodStats{
 			Period:      p.Label,
 			TotalOrders: totalOrders,
 			TotalVolume: totalVolume,
+			Open:        open,
+			Filled:      filled,
 			ByStatus:    byStatus,
 		})
 	}
