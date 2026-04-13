@@ -29,6 +29,106 @@ func bigAdd(a, b string) string {
 	return new(big.Int).Add(x, y).String()
 }
 
+// aggregateLevels buckets raw price levels into at most `limit` levels.
+// If len(levels) <= limit, returns levels unchanged.
+// Otherwise computes an automatic tick size from the price range and merges
+// levels that fall into the same bucket.
+// Input levels MUST be sorted by PriceRate ASC.
+func aggregateLevels(levels []repository.OrderBookLevel, limit int) []repository.OrderBookLevel {
+	if len(levels) <= limit || limit <= 0 {
+		return levels
+	}
+
+	// Parse all prices as big.Int
+	prices := make([]*big.Int, len(levels))
+	for i, lv := range levels {
+		p := new(big.Int)
+		p.SetString(lv.PriceRate, 10)
+		prices[i] = p
+	}
+
+	minPrice := prices[0]
+	maxPrice := prices[len(prices)-1]
+
+	// tick = (maxPrice - minPrice) / limit
+	rangeVal := new(big.Int).Sub(maxPrice, minPrice)
+	tick := new(big.Int).Div(rangeVal, big.NewInt(int64(limit)))
+
+	// If tick is 0 (all prices are the same or very close), return as-is
+	if tick.Sign() == 0 {
+		if len(levels) > limit {
+			return levels[:limit]
+		}
+		return levels
+	}
+
+	// Bucket levels: bucketIndex = (price - minPrice) / tick
+	type bucket struct {
+		sumPrice    *big.Int // sum of prices weighted by amount, for midpoint calc
+		sumAmount   int64
+		totalAmount int64
+		orderCount  int64
+		count       int // number of levels merged
+	}
+
+	buckets := make(map[int64]*bucket)
+	var bucketOrder []int64 // preserve order
+
+	for i, lv := range levels {
+		idx := new(big.Int).Sub(prices[i], minPrice)
+		idx.Div(idx, tick)
+		bucketIdx := idx.Int64()
+
+		b, exists := buckets[bucketIdx]
+		if !exists {
+			b = &bucket{sumPrice: new(big.Int)}
+			buckets[bucketIdx] = b
+			bucketOrder = append(bucketOrder, bucketIdx)
+		}
+
+		// Weighted price: add price * amount for weighted average
+		// If amount is 0, just add the price itself (count-based average)
+		if lv.TotalAmount > 0 {
+			weighted := new(big.Int).Mul(prices[i], big.NewInt(lv.TotalAmount))
+			b.sumPrice.Add(b.sumPrice, weighted)
+			b.sumAmount += lv.TotalAmount
+		} else {
+			b.sumPrice.Add(b.sumPrice, prices[i])
+			b.count++
+		}
+		b.totalAmount += lv.TotalAmount
+		b.orderCount += lv.OrderCount
+	}
+
+	// Build aggregated levels
+	result := make([]repository.OrderBookLevel, 0, len(bucketOrder))
+	for _, idx := range bucketOrder {
+		b := buckets[idx]
+
+		// Compute representative price: weighted average by amount
+		var reprPrice *big.Int
+		if b.sumAmount > 0 {
+			reprPrice = new(big.Int).Div(b.sumPrice, big.NewInt(b.sumAmount))
+		} else if b.count > 0 {
+			reprPrice = new(big.Int).Div(b.sumPrice, big.NewInt(int64(b.count)))
+		} else {
+			// Fallback: bucket midpoint
+			reprPrice = new(big.Int).Mul(big.NewInt(idx), tick)
+			reprPrice.Add(reprPrice, minPrice)
+			halfTick := new(big.Int).Div(tick, big.NewInt(2))
+			reprPrice.Add(reprPrice, halfTick)
+		}
+
+		result = append(result, repository.OrderBookLevel{
+			PriceRate:   reprPrice.String(),
+			TotalAmount: b.totalAmount,
+			OrderCount:  b.orderCount,
+		})
+	}
+
+	return result
+}
+
 type OrderBookHandler struct {
 	cache     *cache.OrderBookCache
 	coinsRepo repository.CoinsRepository
@@ -54,7 +154,7 @@ func NewOrderBookHandler(c *cache.OrderBookCache, coinsRepo repository.CoinsRepo
 // @Param        to_symbol          query  string  false  "To coin symbol"
 // @Param        from_jetton_minter query  string  false  "From jetton minter address (use 'ton' for native TON)"
 // @Param        to_jetton_minter   query  string  false  "To jetton minter address (use 'ton' for native TON)"
-// @Param        limit              query  int     false  "Max number of price levels per side (default 100, max 500)"
+// @Param        limit              query  int     false  "Max number of price levels per side (default 10, max 50). When more unique prices exist, levels are automatically aggregated into buckets."
 // @Success      200  {object}  schemas.OrderBookResponse
 // @Failure      400  {object}  map[string]interface{}
 // @Failure      500  {object}  map[string]interface{}
@@ -148,8 +248,8 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 	if limit <= 0 {
 		limit = 10
 	}
-	if limit > 25 {
-		limit = 25
+	if limit > 50 {
+		limit = 50
 	}
 
 	// Asks: orders selling from_coin for to_coin, sorted by price ASC (best ask = lowest)
@@ -182,17 +282,14 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 		return
 	}
 
+	// Aggregate levels if there are more unique prices than the limit.
+	// Both asks and bids are sorted ASC from cache; aggregate before reversing bids.
+	asks = aggregateLevels(asks, limit)
+	bids = aggregateLevels(bids, limit)
+
 	// Reverse bids so the best bid (highest price) comes first
 	for i, j := 0, len(bids)-1; i < j; i, j = i+1, j-1 {
 		bids[i], bids[j] = bids[j], bids[i]
-	}
-
-	// Apply limit
-	if len(asks) > limit {
-		asks = asks[:limit]
-	}
-	if len(bids) > limit {
-		bids = bids[:limit]
 	}
 
 	// Convert to response levels. PriceRate is now a string (numeric).
