@@ -29,6 +29,64 @@ func bigAdd(a, b string) string {
 	return new(big.Int).Add(x, y).String()
 }
 
+// filterOutliers removes levels whose price is more than 100× the median
+// price (or less than 1/100 of median). This drops legacy orders created
+// with broken price formulas that would otherwise pollute bucketing.
+//
+// Input levels MUST be sorted by PriceRate ASC. Returns a filtered copy
+// preserving ascending order.
+func filterOutliers(levels []repository.OrderBookLevel) []repository.OrderBookLevel {
+	if len(levels) < 3 {
+		return levels
+	}
+
+	// Find weighted-by-amount median price (fall back to position median if no amounts).
+	// Pre-parse all prices once.
+	prices := make([]*big.Int, len(levels))
+	for i, lv := range levels {
+		p := new(big.Int)
+		p.SetString(lv.PriceRate, 10)
+		prices[i] = p
+	}
+
+	// Levels are sorted ASC; find the level whose cumulative amount crosses 50%.
+	var totalAmt int64
+	for _, lv := range levels {
+		totalAmt += lv.TotalAmount
+	}
+	var median *big.Int
+	if totalAmt > 0 {
+		halfAmt := totalAmt / 2
+		var cum int64
+		for i, lv := range levels {
+			cum += lv.TotalAmount
+			if cum >= halfAmt {
+				median = prices[i]
+				break
+			}
+		}
+	}
+	if median == nil {
+		// Fallback: positional median
+		median = prices[len(prices)/2]
+	}
+	if median.Sign() == 0 {
+		return levels
+	}
+
+	// Keep levels within [median/100, median*100]
+	lower := new(big.Int).Div(median, big.NewInt(100))
+	upper := new(big.Int).Mul(median, big.NewInt(100))
+
+	out := make([]repository.OrderBookLevel, 0, len(levels))
+	for i, lv := range levels {
+		if prices[i].Cmp(lower) >= 0 && prices[i].Cmp(upper) <= 0 {
+			out = append(out, lv)
+		}
+	}
+	return out
+}
+
 // aggregateLevels buckets raw price levels into at most `limit` levels.
 // If len(levels) <= limit, returns levels unchanged.
 // Otherwise computes an automatic tick size from the price range and merges
@@ -282,8 +340,11 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 		return
 	}
 
-	// Aggregate levels if there are more unique prices than the limit.
-	// Both asks and bids are sorted ASC from cache; aggregate before reversing bids.
+	// Drop anomalous outlier prices (legacy orders with broken formula) so
+	// bucketing doesn't get polluted. Then aggregate to `limit` levels.
+	// Both asks and bids are sorted ASC from cache.
+	asks = filterOutliers(asks)
+	bids = filterOutliers(bids)
 	asks = aggregateLevels(asks, limit)
 	bids = aggregateLevels(bids, limit)
 
