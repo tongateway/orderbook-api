@@ -255,6 +255,8 @@ func (r *orderRepository) GetDeployedTotalsByWalletAddress(ctx context.Context, 
 // GetOrderBook returns aggregated price levels for deployed orders of a specific pair.
 // Levels are sorted by price_rate ASC.
 // coinID = 0 means TON (from_coin_id IS NULL / to_coin_id IS NULL in DB).
+// Only orders with amount > 0 are included (depleted orders, fully matched but
+// not yet marked closed, are excluded to keep the book clean).
 func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error) {
 	session, err := middleware.GetDBSessionFromContext(ctx)
 	if err != nil {
@@ -263,7 +265,8 @@ func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID
 
 	dbq := session.WithContext(ctx).
 		Model(&dbmodels.Order{}).
-		Where("status = 'deployed'")
+		Where("status = 'deployed'").
+		Where("amount > 0")
 
 	if fromCoinID == 0 {
 		dbq = dbq.Where("from_coin_id IS NULL")
@@ -281,6 +284,7 @@ func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID
 	err = dbq.
 		Select("price_rate, COALESCE(SUM(amount), 0) AS total_amount, COUNT(*) AS order_count").
 		Group("price_rate").
+		Having("COALESCE(SUM(amount), 0) > 0").
 		Order("price_rate ASC").
 		Scan(&levels).Error
 	if err != nil {
