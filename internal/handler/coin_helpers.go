@@ -29,6 +29,17 @@ func normalizeSymbol(symbol string) string {
 	return symbol
 }
 
+// isStablecoin returns true if the coin's symbol matches a known USD stablecoin.
+// Matching is case-insensitive and tolerates the Unicode tether variant "USD₮".
+func isStablecoin(symbol string) bool {
+	s := strings.ToUpper(strings.TrimSpace(symbol))
+	switch s {
+	case "USDT", "USDC", "USD₮":
+		return true
+	}
+	return false
+}
+
 // resolveCoinBySymbol resolves a coin symbol to coinInfo.
 // Returns coinID=0, decimals=9 for native TON.
 func resolveCoinBySymbol(ctx context.Context, coinsRepo repository.CoinsRepository, symbol string) (coinInfo, error) {

@@ -43,8 +43,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Sort (id, name, symbol, decimals; prefix with - for desc)",
+                        "description": "Sort (id, name, symbol, cnt_orders; prefix with - for desc)",
                         "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Order (asc, desc)",
+                        "name": "order",
                         "in": "query"
                     }
                 ],
@@ -58,6 +64,64 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {}
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {}
+                    }
+                }
+            }
+        },
+        "/coins/price": {
+            "get": {
+                "description": "Returns order book price summary for a coin across all its trading pairs.\nCoin can be identified by name, symbol, or jetton minter address.\nReturns best ask, best bid, mid-price, and spread for each pair.\nResponse is cached for 30 seconds.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coins"
+                ],
+                "summary": "Get coin price from order book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coin name (e.g. AgentM)",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Coin symbol (e.g. AGENTM)",
+                        "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Jetton minter address",
+                        "name": "jetton_minter",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.CoinPriceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -122,7 +186,7 @@ const docTemplate = `{
         },
         "/orders": {
             "get": {
-                "description": "Get order list",
+                "description": "Get order list with pagination and sorting",
                 "consumes": [
                     "application/json"
                 ],
@@ -148,8 +212,78 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Sort",
+                        "description": "Sort (id, created_at, deployed_at, status, type, amount, price_rate; prefix with - for desc)",
                         "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Order (asc, desc)",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "From coin ID",
+                        "name": "from_coin_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "To coin ID",
+                        "name": "to_coin_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Owner raw address",
+                        "name": "owner_raw_address",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Status (created, deployed, cancelled, completed, failed, pending_match, closed)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Min amount",
+                        "name": "min_amount",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Max amount",
+                        "name": "max_amount",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Min price rate (numeric string)",
+                        "name": "min_price_rate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Max price rate (numeric string)",
+                        "name": "max_price_rate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Min slippage",
+                        "name": "min_slippage",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Max slippage",
+                        "name": "max_slippage",
                         "in": "query"
                     }
                 ],
@@ -163,6 +297,430 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/agent-leaderboard": {
+            "get": {
+                "description": "Returns aggregated trading stats per agent (wallet) for orders involving the given coin, sorted by completed volume",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get agent leaderboard for a coin",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coin symbol (e.g. AGNT, TON, NOT)",
+                        "name": "coin_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Jetton minter raw address (use 'ton' for TON)",
+                        "name": "jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Limit (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.AgentLeaderboardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/batch-context": {
+            "post": {
+                "description": "Batch endpoint that returns deployed orders and deployed totals for up to 1000 wallet addresses.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get orders and deployed totals for multiple wallets in one call",
+                "parameters": [
+                    {
+                        "description": "Batch request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.BatchContextRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.BatchContextResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/book": {
+            "get": {
+                "description": "Returns aggregated price levels (asks and bids) for deployed orders of a given pair.\nPair can be specified by symbols (from_symbol + to_symbol) or by jetton minter addresses (from_jetton_minter + to_jetton_minter). Use \"ton\" for native TON.\nAsks = orders selling from_coin for to_coin, sorted by price_rate ASC (best ask first).\nBids = orders selling to_coin for from_coin, sorted by price_rate DESC (best bid first).\nAmounts are returned in human-readable format (adjusted for token decimals).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get order book for a trading pair",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "From coin symbol (e.g. TON, USDT)",
+                        "name": "from_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To coin symbol",
+                        "name": "to_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "From jetton minter address (use 'ton' for native TON)",
+                        "name": "from_jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To jetton minter address (use 'ton' for native TON)",
+                        "name": "to_jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max number of price levels per side (default 10, max 50). When more unique prices exist, levels are automatically aggregated into buckets.",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Drop individual orders whose USD value is below this amount (default 40). Only applied when one side is a USD stablecoin (USDT/USDC/USD₮); ignored for other pairs. Pass 0 to disable.",
+                        "name": "min_order_usd",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.OrderBookResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/candles": {
+            "get": {
+                "description": "Builds OHLCV candles from completed orders. Intervals: 1m, 5m, 15m, 1h, 4h, 1d.\nPair can be specified by symbols or jetton minter addresses.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get OHLCV candles for a trading pair",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "From coin symbol (e.g. TON, AGNT)",
+                        "name": "from_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To coin symbol",
+                        "name": "to_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "From jetton minter address",
+                        "name": "from_jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To jetton minter address",
+                        "name": "to_jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Candle interval: 1m, 5m, 15m, 1h, 4h, 1d",
+                        "name": "interval",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max candles (default 500, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.CandlesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/deployed-totals": {
+            "get": {
+                "description": "Sum of order amounts grouped by token (from_coin) for orders with status deployed",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get deployed order totals by token (wallet address)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet raw address (e.g. EQ...)",
+                        "name": "wallet_address",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.OrderDeployedTotalsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/stats": {
+            "get": {
+                "description": "Get order counts by status (created, deployed, cancelled, completed, failed, pending_match, closed) for a wallet",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get order statistics by wallet address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet raw address (e.g. EQ...)",
+                        "name": "wallet_address",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.OrderStatsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/trading-stats": {
+            "get": {
+                "description": "Returns order counts and volumes grouped by status for 1h, 24h, 7d, 30d periods.\nPair can be specified by symbols or jetton minter addresses (same as order book).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get trading statistics for a pair",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "From coin symbol (e.g. TON, USDT)",
+                        "name": "from_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To coin symbol",
+                        "name": "to_symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "From jetton minter address",
+                        "name": "from_jetton_minter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "To jetton minter address",
+                        "name": "to_jetton_minter",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api_internal_handler_schemas.TradingStatsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -207,13 +765,27 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
         },
         "/vaults": {
             "get": {
-                "description": "Get vaults",
+                "description": "Get vaults list",
                 "consumes": [
                     "application/json"
                 ],
@@ -223,7 +795,45 @@ const docTemplate = `{
                 "tags": [
                     "vaults"
                 ],
-                "summary": "Get vaults",
+                "summary": "Get vaults list",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort (id, factory_id, created_at, type; prefix with - for desc)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Order (asc, desc)",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by jetton minter address",
+                        "name": "jetton_minter_address",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by type (jetton, ton)",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -234,10 +844,11 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
+                        "schema": {}
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {}
                     }
                 }
             }
@@ -278,13 +889,408 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
         }
     },
+    "definitions": {
+        "api_internal_handler_schemas.AgentLeaderboardEntry": {
+            "type": "object",
+            "properties": {
+                "buy_volume": {
+                    "type": "integer"
+                },
+                "completed_orders": {
+                    "type": "integer"
+                },
+                "completed_volume": {
+                    "type": "integer"
+                },
+                "deployed_orders": {
+                    "type": "integer"
+                },
+                "rank": {
+                    "type": "integer"
+                },
+                "raw_address": {
+                    "type": "string"
+                },
+                "sell_volume": {
+                    "type": "integer"
+                },
+                "total_orders": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_internal_handler_schemas.AgentLeaderboardResponse": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.AgentLeaderboardEntry"
+                    }
+                },
+                "coin_id": {
+                    "type": "integer"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.BatchContextRequest": {
+            "type": "object",
+            "required": [
+                "wallet_addresses"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string"
+                },
+                "wallet_addresses": {
+                    "type": "array",
+                    "maxItems": 1000,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api_internal_handler_schemas.BatchContextResponse": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.BatchContextWalletResult"
+                    }
+                }
+            }
+        },
+        "api_internal_handler_schemas.BatchContextWalletResult": {
+            "type": "object",
+            "properties": {
+                "deployed_totals": {},
+                "orders": {}
+            }
+        },
+        "api_internal_handler_schemas.CandleItem": {
+            "type": "object",
+            "properties": {
+                "c": {
+                    "type": "string"
+                },
+                "h": {
+                    "type": "string"
+                },
+                "l": {
+                    "type": "string"
+                },
+                "o": {
+                    "type": "string"
+                },
+                "t": {
+                    "type": "integer"
+                },
+                "v": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_internal_handler_schemas.CandlesResponse": {
+            "type": "object",
+            "properties": {
+                "candles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.CandleItem"
+                    }
+                },
+                "from_decimals": {
+                    "type": "integer"
+                },
+                "from_symbol": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "to_decimals": {
+                    "type": "integer"
+                },
+                "to_symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.CoinPriceCoinInfo": {
+            "type": "object",
+            "properties": {
+                "decimals": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.CoinPricePair": {
+            "type": "object",
+            "properties": {
+                "ask_order_count": {
+                    "type": "integer"
+                },
+                "ask_total_amount": {
+                    "type": "integer"
+                },
+                "best_ask": {
+                    "type": "string"
+                },
+                "best_bid": {
+                    "type": "string"
+                },
+                "bid_order_count": {
+                    "type": "integer"
+                },
+                "bid_total_amount": {
+                    "type": "integer"
+                },
+                "counter_coin_decimals": {
+                    "type": "integer"
+                },
+                "counter_coin_id": {
+                    "type": "integer"
+                },
+                "counter_coin_symbol": {
+                    "type": "string"
+                },
+                "mid_price": {
+                    "type": "string"
+                },
+                "spread": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.CoinPriceResponse": {
+            "type": "object",
+            "properties": {
+                "coin": {
+                    "$ref": "#/definitions/api_internal_handler_schemas.CoinPriceCoinInfo"
+                },
+                "pairs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.CoinPricePair"
+                    }
+                }
+            }
+        },
+        "api_internal_handler_schemas.OrderBookLevel": {
+            "type": "object",
+            "properties": {
+                "cumulative_amount": {
+                    "type": "integer"
+                },
+                "cumulative_value": {
+                    "type": "string"
+                },
+                "order_count": {
+                    "type": "integer"
+                },
+                "price_rate": {
+                    "type": "string"
+                },
+                "total_amount": {
+                    "type": "integer"
+                },
+                "total_value": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.OrderBookResponse": {
+            "type": "object",
+            "properties": {
+                "asks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.OrderBookLevel"
+                    }
+                },
+                "bids": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.OrderBookLevel"
+                    }
+                },
+                "from_decimals": {
+                    "type": "integer"
+                },
+                "from_symbol": {
+                    "type": "string"
+                },
+                "mid_price": {
+                    "type": "string"
+                },
+                "spread": {
+                    "type": "string"
+                },
+                "to_decimals": {
+                    "type": "integer"
+                },
+                "to_symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.OrderDeployedTotalsItem": {
+            "type": "object",
+            "properties": {
+                "coin_id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "total_amount": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_internal_handler_schemas.OrderDeployedTotalsResponse": {
+            "type": "object",
+            "properties": {
+                "totals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.OrderDeployedTotalsItem"
+                    }
+                },
+                "wallet_address": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.OrderStatsResponse": {
+            "type": "object",
+            "properties": {
+                "by_status": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "closed": {
+                    "description": "cancelled + completed + failed + closed",
+                    "type": "integer"
+                },
+                "open": {
+                    "description": "created + deployed + pending_match",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "wallet_address": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_internal_handler_schemas.PeriodStats": {
+            "type": "object",
+            "properties": {
+                "by_status": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.StatusStats"
+                    }
+                },
+                "filled": {
+                    "$ref": "#/definitions/api_internal_handler_schemas.StatusStats"
+                },
+                "open": {
+                    "$ref": "#/definitions/api_internal_handler_schemas.StatusStats"
+                },
+                "period": {
+                    "type": "string"
+                },
+                "total_orders": {
+                    "type": "integer"
+                },
+                "total_volume": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_internal_handler_schemas.StatusStats": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "volume": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_internal_handler_schemas.TradingStatsResponse": {
+            "type": "object",
+            "properties": {
+                "from_decimals": {
+                    "type": "integer"
+                },
+                "from_symbol": {
+                    "type": "string"
+                },
+                "periods": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_internal_handler_schemas.PeriodStats"
+                    }
+                },
+                "to_decimals": {
+                    "type": "integer"
+                },
+                "to_symbol": {
+                    "type": "string"
+                }
+            }
+        }
+    },
     "securityDefinitions": {
-        "ApiKeyAuth": {
+        "Bearer": {
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

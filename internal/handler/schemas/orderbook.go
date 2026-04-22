@@ -10,6 +10,10 @@ type OrderBookRequestHTTP struct {
 	FromJettonMinter string `form:"from_jetton_minter"`
 	ToJettonMinter   string `form:"to_jetton_minter"`
 	Limit            int64  `form:"limit"`
+	// MinOrderUsd filters out individual orders whose value is less than this
+	// number of USD dollars. Only applied when one side of the pair is a
+	// stablecoin (USDT/USDC/USD₮); otherwise ignored. Default: 40. Pass 0 to disable.
+	MinOrderUsd *int64 `form:"min_order_usd"`
 }
 
 // OrderBookLevel represents a single price level in the order book

@@ -59,6 +59,18 @@ type TradingStatsRow struct {
 	Volume int64
 }
 
+// OrderBookFilter holds optional per-order filters applied before aggregation
+// in GetOrderBook. Zero values mean "no filter".
+type OrderBookFilter struct {
+	// MinAmount filters orders where amount >= MinAmount (smallest from_coin units).
+	// Used when from_coin is a stablecoin and we want USD-denominated filtering.
+	MinAmount int64
+	// MinTotalValue filters orders where amount * price_rate >= MinTotalValue
+	// (as a numeric string, because the product can overflow int64).
+	// Used when to_coin is a stablecoin.
+	MinTotalValue string
+}
+
 // CoinPairPriceRow represents one row from the coin price summary query.
 // Side is "ask" (orders selling the coin) or "bid" (orders buying the coin).
 type CoinPairPriceRow struct {
@@ -102,7 +114,7 @@ type OrderRepository interface {
 	GetStatsByWalletAddress(ctx context.Context, walletAddress string) ([]OrderStats, int64, error)
 	GetDeployedTotalsByWalletAddress(ctx context.Context, walletAddress string) ([]DeployedTotalRow, error)
 	GetBatchContext(ctx context.Context, walletAddresses []string, status string) (map[string]*BatchContextResult, error)
-	GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error)
+	GetOrderBook(ctx context.Context, fromCoinID, toCoinID int, filter OrderBookFilter) ([]OrderBookLevel, error)
 	GetTradingStats(ctx context.Context, fromCoinID, toCoinID int, since time.Time) ([]TradingStatsRow, error)
 	GetCoinPriceSummary(ctx context.Context, coinID int) ([]CoinPairPriceRow, error)
 	GetAgentLeaderboard(ctx context.Context, coinID int) ([]AgentLeaderboardRow, error)
@@ -257,7 +269,7 @@ func (r *orderRepository) GetDeployedTotalsByWalletAddress(ctx context.Context, 
 // coinID = 0 means TON (from_coin_id IS NULL / to_coin_id IS NULL in DB).
 // Only orders with amount > 0 are included (depleted orders, fully matched but
 // not yet marked closed, are excluded to keep the book clean).
-func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID int) ([]OrderBookLevel, error) {
+func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID int, filter OrderBookFilter) ([]OrderBookLevel, error) {
 	session, err := middleware.GetDBSessionFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -278,6 +290,16 @@ func (r *orderRepository) GetOrderBook(ctx context.Context, fromCoinID, toCoinID
 		dbq = dbq.Where("to_coin_id IS NULL")
 	} else {
 		dbq = dbq.Where("to_coin_id = ?", toCoinID)
+	}
+
+	// USD-denominated filter applied BEFORE grouping so each individual order
+	// meets the threshold.
+	if filter.MinAmount > 0 {
+		dbq = dbq.Where("amount >= ?", filter.MinAmount)
+	}
+	if filter.MinTotalValue != "" {
+		// price_rate is numeric; cast the bound to numeric to avoid int overflow.
+		dbq = dbq.Where("amount * price_rate >= CAST(? AS numeric)", filter.MinTotalValue)
 	}
 
 	var levels []OrderBookLevel

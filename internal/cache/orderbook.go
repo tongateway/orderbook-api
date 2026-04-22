@@ -15,7 +15,7 @@ import (
 )
 
 // OrderBookLoader is a function that loads order book levels from the database.
-type OrderBookLoader func(ctx context.Context, fromCoinID, toCoinID int) ([]repository.OrderBookLevel, error)
+type OrderBookLoader func(ctx context.Context, fromCoinID, toCoinID int, filter repository.OrderBookFilter) ([]repository.OrderBookLevel, error)
 
 type cacheEntry struct {
 	data      []repository.OrderBookLevel
@@ -82,16 +82,23 @@ func (c *OrderBookCache) cleanup() {
 	}
 }
 
-func cacheKey(fromCoinID, toCoinID int) string {
-	return fmt.Sprintf("orderbook:%d:%d", fromCoinID, toCoinID)
+func cacheKey(fromCoinID, toCoinID int, filter repository.OrderBookFilter) string {
+	// Zero-value filter keeps the legacy key format (backward-compatible with
+	// existing Redis entries).
+	if filter.MinAmount == 0 && filter.MinTotalValue == "" {
+		return fmt.Sprintf("orderbook:%d:%d", fromCoinID, toCoinID)
+	}
+	return fmt.Sprintf("orderbook:%d:%d:f:%d:%s", fromCoinID, toCoinID, filter.MinAmount, filter.MinTotalValue)
 }
 
 // Get returns aggregated order book levels for a trading pair direction.
 // It checks L1 (in-memory) → L2 (Redis) → DB, using singleflight to deduplicate
 // concurrent requests for the same key.
 // Returned slice is a safe copy that the caller can freely modify.
-func (c *OrderBookCache) Get(ctx context.Context, fromCoinID, toCoinID int) ([]repository.OrderBookLevel, error) {
-	key := cacheKey(fromCoinID, toCoinID)
+// The `filter` parameter is included in the cache key — different filter
+// values are cached independently.
+func (c *OrderBookCache) Get(ctx context.Context, fromCoinID, toCoinID int, filter repository.OrderBookFilter) ([]repository.OrderBookLevel, error) {
+	key := cacheKey(fromCoinID, toCoinID, filter)
 
 	// L1: in-memory check
 	if data, ok := c.getL1(key); ok {
@@ -121,7 +128,7 @@ func (c *OrderBookCache) Get(ctx context.Context, fromCoinID, toCoinID int) ([]r
 		}
 
 		// L3: Database
-		levels, dbErr := c.loader(ctx, fromCoinID, toCoinID)
+		levels, dbErr := c.loader(ctx, fromCoinID, toCoinID, filter)
 		if dbErr != nil {
 			return nil, dbErr
 		}

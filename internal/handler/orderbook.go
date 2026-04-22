@@ -29,6 +29,48 @@ func bigAdd(a, b string) string {
 	return new(big.Int).Add(x, y).String()
 }
 
+// buildUSDFilter returns an OrderBookFilter that drops individual orders whose
+// USD value is below minUsd. It only applies the filter when at least one side
+// of the trade is a USD stablecoin — otherwise we have no reliable USD rate
+// for the pair (no oracle configured).
+//
+// For orders going from → to:
+//   - if `from` is a stablecoin, USD == amount / 10^from_decimals → filter MinAmount
+//   - if `to`   is a stablecoin, USD == amount * price_rate / 10^(18 + to_decimals) → filter MinTotalValue
+//
+// Returns zero-value filter when minUsd <= 0 or no stablecoin side is detected.
+func buildUSDFilter(from, to coinInfo, minUsd int64) repository.OrderBookFilter {
+	if minUsd <= 0 {
+		return repository.OrderBookFilter{}
+	}
+	// Stablecoin on the source side → order size in stablecoin smallest units.
+	if isStablecoin(from.Symbol) {
+		minAmount := new(big.Int).Mul(big.NewInt(minUsd), pow10(from.Decimals))
+		if minAmount.IsInt64() {
+			return repository.OrderBookFilter{MinAmount: minAmount.Int64()}
+		}
+		return repository.OrderBookFilter{}
+	}
+	// Stablecoin on the destination side → amount * price_rate threshold.
+	// price_rate is scaled by 10^(18 + from_decimals - to_decimals), so the
+	// product amount * price_rate normalises to 10^(18 + to_decimals) for USD.
+	if isStablecoin(to.Symbol) {
+		// threshold = minUsd * 10^(18 + to_decimals)
+		threshold := new(big.Int).Mul(big.NewInt(minUsd), pow10(18+to.Decimals))
+		return repository.OrderBookFilter{MinTotalValue: threshold.String()}
+	}
+	// Neither side is a stablecoin → we cannot convert to USD server-side.
+	return repository.OrderBookFilter{}
+}
+
+// pow10 returns 10^n as a *big.Int.
+func pow10(n int) *big.Int {
+	if n <= 0 {
+		return big.NewInt(1)
+	}
+	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
+}
+
 // filterOutliers removes levels whose price is more than 100× the median
 // price (or less than 1/100 of median). This drops legacy orders created
 // with broken price formulas that would otherwise pollute bucketing.
@@ -213,6 +255,7 @@ func NewOrderBookHandler(c *cache.OrderBookCache, coinsRepo repository.CoinsRepo
 // @Param        from_jetton_minter query  string  false  "From jetton minter address (use 'ton' for native TON)"
 // @Param        to_jetton_minter   query  string  false  "To jetton minter address (use 'ton' for native TON)"
 // @Param        limit              query  int     false  "Max number of price levels per side (default 10, max 50). When more unique prices exist, levels are automatically aggregated into buckets."
+// @Param        min_order_usd      query  int     false  "Drop individual orders whose USD value is below this amount (default 40). Only applied when one side is a USD stablecoin (USDT/USDC/USD₮); ignored for other pairs. Pass 0 to disable."
 // @Success      200  {object}  schemas.OrderBookResponse
 // @Failure      400  {object}  map[string]interface{}
 // @Failure      500  {object}  map[string]interface{}
@@ -310,8 +353,24 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 		limit = 50
 	}
 
+	// Resolve min USD filter (default 40, 0 disables).
+	minUsd := int64(40)
+	if req.MinOrderUsd != nil {
+		minUsd = *req.MinOrderUsd
+		if minUsd < 0 {
+			minUsd = 0
+		}
+	}
+
+	// Compute filter per direction. For asks (from_coin → to_coin), if
+	// from_coin is a stablecoin, the order's USD == amount / 10^from_decimals,
+	// so filter by MinAmount. If to_coin is a stablecoin, the order's USD ==
+	// amount * price_rate / 10^(18 + to_decimals), so filter by MinTotalValue.
+	asksFilter := buildUSDFilter(fromCoin, toCoin, minUsd)
+	bidsFilter := buildUSDFilter(toCoin, fromCoin, minUsd)
+
 	// Asks: orders selling from_coin for to_coin, sorted by price ASC (best ask = lowest)
-	asks, err := h.cache.Get(ctx, fromCoin.ID, toCoin.ID)
+	asks, err := h.cache.Get(ctx, fromCoin.ID, toCoin.ID, asksFilter)
 	if err != nil {
 		c.Set("error", err)
 		fullErr := middleware.FormatErrorFull(err)
@@ -326,7 +385,7 @@ func (h *OrderBookHandler) GetOrderBook(c *gin.Context) {
 	}
 
 	// Bids: orders selling to_coin for from_coin, sorted by price DESC (best bid = highest)
-	bids, err := h.cache.Get(ctx, toCoin.ID, fromCoin.ID)
+	bids, err := h.cache.Get(ctx, toCoin.ID, fromCoin.ID, bidsFilter)
 	if err != nil {
 		c.Set("error", err)
 		fullErr := middleware.FormatErrorFull(err)
