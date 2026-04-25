@@ -430,6 +430,9 @@ func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) (
 			WHERE (o.from_coin_id IS NULL OR o.to_coin_id IS NULL)
 			GROUP BY w.raw_address
 			ORDER BY completed_volume DESC, completed_orders DESC
+			-- Audit 05-M1: hard cap to bound memory + DB load even if cache TTL drives a fresh scan.
+			-- Handler still applies its own pagination on the cached slice.
+			LIMIT 1000
 		`
 		err = session.WithContext(ctx).Raw(query).Scan(&rows).Error
 	} else {
@@ -447,6 +450,9 @@ func (r *orderRepository) GetAgentLeaderboard(ctx context.Context, coinID int) (
 			WHERE (o.from_coin_id = $3 OR o.to_coin_id = $4)
 			GROUP BY w.raw_address
 			ORDER BY completed_volume DESC, completed_orders DESC
+			-- Audit 05-M1: hard cap to bound memory + DB load even if cache TTL drives a fresh scan.
+			-- Handler still applies its own pagination on the cached slice.
+			LIMIT 1000
 		`
 		err = session.WithContext(ctx).Raw(query, coinID, coinID, coinID, coinID).Scan(&rows).Error
 	}

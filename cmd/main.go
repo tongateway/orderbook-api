@@ -62,9 +62,12 @@ func main() {
 	router.Use(appmiddleware.RecoveryLogger(slog.Default()))
 	router.Use(appmiddleware.RequestLogger(slog.Default()))
 
-	// CORS
+	// CORS — restricted to the orderbook frontend (tradememe.ai). The
+	// AI agent frontend (agentmeme.ai) talks to a separate API, so it
+	// doesn't need CORS access here. Audit 05-H3 — narrowing reduces
+	// blast radius if either domain is XSS-compromised.
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://tradememe.ai", "https://agentmeme.ai"},
+		AllowOrigins:     []string{"https://tradememe.ai"},
 		AllowMethods:     []string{"GET", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,

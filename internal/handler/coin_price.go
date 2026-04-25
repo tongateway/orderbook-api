@@ -231,6 +231,12 @@ func (h *CoinPriceHandler) resolveCounterCoin(ctx context.Context, coinID int) (
 	if coinID == coinIDTON {
 		return coinInfo{ID: coinIDTON, Symbol: "TON", Decimals: tonDecimals}, nil
 	}
+	// Audit 05-H1 (gosec G115): reject non-positive coin IDs before the
+	// int → uint64 cast. Negative values would wrap to huge numbers and
+	// cause confusing "not found" errors instead of explicit rejection.
+	if coinID < 0 {
+		return coinInfo{}, fmt.Errorf("invalid coin id: %d", coinID)
+	}
 
 	dbCoin, err := h.coinsRepo.GetByID(ctx, uint64(coinID))
 	if err != nil {

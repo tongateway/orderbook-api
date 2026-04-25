@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"log/slog"
@@ -16,7 +17,28 @@ import (
 const (
 	defaultRateLimit = 1 // Default rate limit in requests per second
 	rateLimitPrefix  = "rate_limit:"
+
+	// Audit 05-H5: server-side hard cap on per-API-key rate limits.
+	// Without this, a misconfigured key with rate_limit=10000 in DB could
+	// effectively bypass protection against authenticated DoS.
+	maxAllowedRateLimit = 200
+
+	// Audit 05-H4: fail-closed threshold. Rate limiter shouldn't allow
+	// unlimited traffic if Redis breaks; in-memory fallback counter trips
+	// to a strict per-IP limit during outage.
+	failoverPerIPRPS = 10
 )
+
+// inMemoryFailover is a tiny per-instance counter used only when Redis is
+// unreachable. Keys auto-expire via the cleanup goroutine.
+var inMemoryFailover = struct {
+	m map[string]*failoverEntry
+}{m: make(map[string]*failoverEntry)}
+
+type failoverEntry struct {
+	count   int
+	resetAt time.Time
+}
 
 // RateLimiter creates a rate limiter middleware using Redis.
 // Authenticated requests use the per-key rate limit stored in the API key record.
@@ -39,6 +61,11 @@ func RateLimiter(redisClient *redis.Client, defaultRPS int, anonymousRPS int, wi
 		// Try to get API key rate limit from context (set by APIKeyAuth middleware)
 		if apiKeyRateLimit, exists := c.Get("api_key_rate_limit"); exists {
 			if rl, ok := apiKeyRateLimit.(int); ok && rl > 0 {
+				// Audit 05-H5: clamp to server-side max even if DB stores
+				// a higher value.
+				if rl > maxAllowedRateLimit {
+					rl = maxAllowedRateLimit
+				}
 				rateLimit = rl
 				// Get API key hash for Redis key
 				if apiKeyHash, exists := c.Get("api_key_hash"); exists {
@@ -65,11 +92,19 @@ func RateLimiter(redisClient *redis.Client, defaultRPS int, anonymousRPS int, wi
 		// Increment counter and set expiration
 		count, err := redisClient.Incr(ctx, redisKey).Result()
 		if err != nil {
-			// If Redis error, log and allow request (fail open)
-			slog.WarnContext(ctx, "Rate limiter Redis error",
-				"error", err,
-				"key", redisKey,
+			// Audit 05-H4: when Redis is unreachable, fall over to a tiny
+			// in-memory counter per IP. Strictly bounded — under outage we
+			// drop into severe rate-limit rather than open the floodgates.
+			slog.WarnContext(ctx, "Rate limiter Redis error — using in-memory fallback",
+				"error", err, "key", redisKey,
 			)
+			if !allowFailover(c.ClientIP(), failoverPerIPRPS, window) {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": "Rate limit exceeded (degraded mode)",
+				})
+				c.Abort()
+				return
+			}
 			c.Next()
 			return
 		}
@@ -103,4 +138,22 @@ func RateLimiter(redisClient *redis.Client, defaultRPS int, anonymousRPS int, wi
 
 		c.Next()
 	}
+}
+
+// allowFailover is the in-memory fallback used by RateLimiter when Redis
+// is unavailable. Strict per-IP cap; entries auto-expire on next access.
+// Audit 05-H4.
+var failoverMu sync.Mutex
+
+func allowFailover(ip string, maxReq int, window time.Duration) bool {
+	failoverMu.Lock()
+	defer failoverMu.Unlock()
+	now := time.Now()
+	e, ok := inMemoryFailover.m[ip]
+	if !ok || now.After(e.resetAt) {
+		inMemoryFailover.m[ip] = &failoverEntry{count: 1, resetAt: now.Add(window)}
+		return true
+	}
+	e.count++
+	return e.count <= maxReq
 }

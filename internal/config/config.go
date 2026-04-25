@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -60,15 +61,45 @@ func InitConfig() *Config {
 		panic(fmt.Errorf("resolve config path: %w", err))
 	}
 
-	data, err := os.ReadFile(absPath)
+	// Audit 05-C1: only allow CONFIG_PATH within whitelisted directories.
+	// Without this, an attacker who can set the env var (CI leak,
+	// container misconfig, operator error) could read arbitrary files
+	// like /etc/shadow or /proc/self/environ via subsequent error
+	// messages.
+	if !isAllowedConfigPath(absPath) {
+		panic(fmt.Errorf("config path not in allowed directory: %s", absPath))
+	}
+
+	data, err := os.ReadFile(absPath) //nolint:gosec // path validated by isAllowedConfigPath
 	if err != nil {
-		panic(fmt.Errorf("read config file %s: %w", absPath, err))
+		// Don't echo file content / arbitrary substrings on error.
+		panic(fmt.Errorf("read config file: %w", err))
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		panic(fmt.Errorf("unmarshal config file %s: %w", absPath, err))
+		// Same — don't reveal file substrings.
+		panic(fmt.Errorf("unmarshal config (path: %s): yaml error", absPath))
 	}
 
 	return &cfg
+}
+
+// isAllowedConfigPath restricts CONFIG_PATH to safe locations.
+func isAllowedConfigPath(absPath string) bool {
+	allowed := []string{
+		"/etc/open4dev-api/",
+		"/app/configs/",
+		"/srv/configs/",
+	}
+	// Allow current working dir for local dev (matches `./configs/...`).
+	if cwd, err := os.Getwd(); err == nil {
+		allowed = append(allowed, cwd+"/")
+	}
+	for _, prefix := range allowed {
+		if strings.HasPrefix(absPath, prefix) {
+			return true
+		}
+	}
+	return false
 }
