@@ -62,15 +62,19 @@ func main() {
 	router.Use(appmiddleware.RecoveryLogger(slog.Default()))
 	router.Use(appmiddleware.RequestLogger(slog.Default()))
 
-	// CORS — restricted to the orderbook frontend (tradememe.ai). The
-	// AI agent frontend (agentmeme.ai) talks to a separate API, so it
-	// doesn't need CORS access here. Audit 05-H3 — narrowing reduces
-	// blast radius if either domain is XSS-compromised.
+	// CORS — wide open for developer ergonomics (local dev, partner clients,
+	// browser tools). All write/state endpoints behind Bearer API-key auth
+	// (header), so origin is not a security control here. AllowCredentials
+	// is intentionally `false` — combined with `AllowAllOrigins: true` it's
+	// the only valid CORS combo per spec, and avoids the cookie-leak class
+	// we worried about in audit 05-H3 (no cookies are used by this API).
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://tradememe.ai"},
-		AllowMethods:     []string{"GET", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		AllowCredentials: true,
+		AllowAllOrigins:  true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Requested-With"},
+		ExposeHeaders:    []string{"Content-Length", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
 	}))
 
 	api := router.Group("/api/v1")
